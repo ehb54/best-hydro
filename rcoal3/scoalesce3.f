@@ -134,12 +134,14 @@ c	the number of triangles desired. If np is not -1, output will be produced.
 	dimension::vx(3),vy(3),vz(3)
       integer first,second
 	logical connolly, sanner, smart,verb,dangle
+      logical lflip
       common /lnkcnt/ nlinkskip
        CHARACTER*80 tfile,CONC3V,OUTPUT,OUTPUTHIS, basename,
      $ smar,CON3b,inputf, outputf, vfile, text1,text2
 
 	connolly = .true.
       nlinkskip = 0
+      nflipskip = 0
 	smart = .false.
 	verb = .false.
 	dangle = .false.
@@ -526,6 +528,25 @@ c  This triangle also contains the second acute vertex. They share a side.
 c  Now make two new triangles: the obtuse vertex is given to the opposite triangle.
 c  One acute vertex is replaced by the middle vertex of the other triangle.	
 	
+c     Skip the flip if its new edge, from the obtuse vertex to the other
+c     triangle's third vertex, already exists: flipping would make that
+c     edge non-manifold.  Skipped flips are counted in nflipskip.
+      ia = vn(indx(j),iobv(j))
+      id = 0
+      do m = 1,3
+      if(vn(k,m).ne.vn(indx(j),L1).and.vn(k,m).ne.vn(indx(j),L2))
+     $ id = vn(k,m)
+      enddo
+      lflip = ia.ne.id
+      do kk = 1,ntriang
+      if(lflip.and.kk.ne.k.and.kk.ne.indx(j).and.vn(kk,1).ne.-1) then
+      if((vn(kk,1).eq.ia.or.vn(kk,2).eq.ia.or.vn(kk,3).eq.ia).and.
+     $   (vn(kk,1).eq.id.or.vn(kk,2).eq.id.or.vn(kk,3).eq.id))
+     $ lflip = .false.
+      endif
+      enddo
+      if(.not.lflip) nflipskip = nflipskip+1
+      if(lflip) then
 	if(vn(indx(j),L1).eq.vn(k,1).and.vn(indx(j),L2).eq.vn(k,2)) then 
 			vn(indx(j),L1) = vn(k,3)
 			vn(k,2) = vn(indx(j),iobv(j))
@@ -596,6 +617,7 @@ c     Pass copies, as above.
       iv2 = vn(indx(j),L2)
       call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
+      endif
       endif
 	iflag = 1
 		endif
@@ -752,6 +774,7 @@ c	if(modulo(nj,20).eq.1) pause
 	print *, 'Cut-off length (A) = ', cutofflength
 	print *,'Found',nobtuse,' slender obtuse triangles, processed',icon
       print *,'Collapses skipped by the topology check: ',nlinkskip
+      print *,'Flips skipped by the topology check: ',nflipskip
 
 
 c	OUTPUT AND HISTOGRAM
