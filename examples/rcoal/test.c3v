@@ -1,0 +1,13 @@
+molecule name           = aba3
+number of atoms         =          7
+probe radius            =          1.500
+contact area            =         45.882
+reentrant area          =         13.482
+molecular area          =         59.364
+accessible area         =        171.076
+solvent-excluded volume =         41.039
+
+component           center              volume    molecular  accessible
+ number      x        y        z                    area       area
+
+    1       0.197    0.047    0.000      41.039      59.364     171.076

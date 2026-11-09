@@ -1,0 +1,2 @@
+#/bin/csh
+F90 -o best best.f input.f tgetgr.f triangleint.f jacobi.f matin3.f visco.f difco.f output.f -mcmodel=medium -Mlarge_arrays -r8 -R/home/apps/pgi/linux86-64/6.0/lib/libacml.a -Bstatic -tp=k8-64 -O2

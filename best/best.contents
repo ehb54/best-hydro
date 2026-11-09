@@ -1,0 +1,24 @@
+
+Sample files:
+14b37N0528
+	This is the input file produced by rcoal
+14b37N0528.be
+	This is the BEST output file
+14b37N0528.log
+	This is a log file produced by BEST - useful for debugging purposes
+
+	The following files are the BEST Fortran sources
+best.f
+difco.f
+index.f
+input.f
+jacobi.f
+matin3.f
+output.f
+tgetgr.f
+triangleint.f
+visco.f
+
+	The following file may be useful in compiling BEST:
+make_best
+	Recall that Lapack Libraries must be referenced at compilation time.

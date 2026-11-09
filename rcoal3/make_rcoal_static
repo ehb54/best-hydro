@@ -1,0 +1,4 @@
+#/bin/csh
+F90 -o rcoal3_static rcoal3.f scoalesce3.f index.f  -r8 -tp=k8-64 -O2 -Bstatic
+
+

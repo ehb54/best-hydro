@@ -1,0 +1,4 @@
+#/bin/csh
+F90 -o rcoal rcoal.f scoalesce.f index.f  -r8 -tp=k8-64 -O2
+
+

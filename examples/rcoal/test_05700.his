@@ -1,0 +1,56 @@
+ COALESCE PROCESS RESULTS -Version=     3.100000000000000     
+  
+ Input File (Connolly): 
+ test.c3p                                                                        
+  Edge fraction =    0.8103560142987803     
+  
+  Beginning polygon Area =      11869.95676611637     
+ Initial number of triangle records=         32388
+ Number of degenerate triangles, pass 1=             0
+ Number of small triangles deleted, pass 1=         18280
+ Number of polygons generated, pass 1=         14108
+ total area, pass 1 =     11783.47510559646     
+  
+ Number of small triangles deleted, pass 2=          8408
+ Number of polygons generated, pass 2=          5700
+ total area, pass 2 =     11615.95341388648     
+ Average Triangle Area (A^2)=     2.037886563839733     
+ Average edgelength (A)=     1.442226492523909     
+ Cut-off length (A) =     1.168716912197785     
+ Found           21  slender obtuse triangles,           processed           21
+  
+ Histogram bins and count follows:
+ Area distribution around   0.2037886563839733       A^2
+    0.000000000000000                 0
+   4.0757731276794660E-002            0
+   8.1515462553589320E-002            0
+   0.1222731938303840                 0
+   0.1630309251071786                 0
+   0.2037886563839733                 0
+   0.2445463876607680                 1
+   0.2853041189375626                 1
+   0.3260618502143573                 1
+   0.3668195814911519                 0
+   0.4075773127679466                 0
+ Area distribution around    2.037886563839733      A^2
+   0.4075773127679465                 0
+   0.5706082378751251                47
+   0.7336391629823038               214
+   0.8966700880894825               806
+    1.059701013196661              1028
+    1.222731938303840              1271
+    1.385762863411018              1236
+    1.548793788518197              1227
+    1.711824713625376               968
+    1.874855638732554              1690
+    2.037886563839733               655
+    2.200917488946912               602
+    2.363948414054090               524
+    2.526979339161269               384
+    2.690010264268448               380
+    2.853041189375626               279
+    3.016072114482805               261
+    3.179103039589983               216
+    3.342133964697162               205
+    3.505164889804341               202
+    3.668195814911519              1256

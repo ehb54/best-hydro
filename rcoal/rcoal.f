@@ -1,0 +1,162 @@
+	program rcoal
+c This program uses the routine Coalesce (see below) to produce a set
+c of input files for the program BEST.  The purpose of using rcoal 
+c instead of Coalesce is to specify the number of triangles one desires
+c in the BEST input files instead of using "edgfrac", the control para-
+c meter in Coalesce.  In order to relate the number of triangles and
+c e (edgfrac), we have determined that the functional form of this 
+c relation can be approximately expressed by
+c	N(e) = Nc /(1 + a e^p)
+c where Nc is the number of triangles in the Connolly .c3p file.
+c This program runs two standard calculations with e = .7 and e = 1.0
+c in order to determine the values of the constants a and p.  Then
+c  these values are used to determine the e value for a requested
+c number of triangles. No output is written to disk for the initial two calcs. 
+
+c Performance:  The relationship typically underestimates the number of
+c triangles requested by 5%.  Thus, it is recommended that when setting
+c the values of the triangle range you desire, that you increase those
+c by 5% at the outset.  For example, if you desire 5 files with triangle 
+c numbers varying between 6000 and 3000, then run rcoal as follows:
+c   rcoal -f test.c3p -nmax 6300 -nmin 3150 -n 5
+
+c To request a single file with a given number ntriang of triangles, set
+c nmax = nmin = ntriang, n =1.
+
+c To use the control parameter directly, specify only option "-e value" on the command line.
+c In this case, no apriori estimate of the number of triangles will be made.
+c This is useful when analyzing a molecular dynamics trajectory where one wants
+c to use the same number of triangles for each run.  In that case we run rcoal
+c once to get the edgefrac value that corresponds to the desired number of
+c triangles, typically about 3500, and then call rcoal with that value of 
+c edgefrac.  A typical command in this case is:
+c	rcoal -f test.c3p -e 0.82
+c Note that values of any other parameters are ignored if the -e option is used.
+
+c Aragon 10/15/07
+
+	dimension nt(10),nn(10),e(10)
+	CHARACTER*80 con3
+
+        nmax = -1
+        nmin = -1
+        n = -1
+	edgefrac = -1.0
+
+	print*,"Rcoal Ver. 2.0"
+	print*, "SFSU, Aragon Lab."
+
+C READ INPUT FROM COMMAND LINE
+        CALL INPUT(CON3,NMAX,NMIN,N,WM,edgefrac)
+	open(10,file=con3,status='old',iostat=ierr)
+	read(10,*)dum,dum,ntriang
+	close(10)
+c If value of edgefrac was not specified upon input, then we assume that
+c the user wants files with specific number of triangles.
+	if(edgefrac.gt.0.0) goto 110
+
+        if(nmax.eq.-1.OR.nmin.le.3.OR.n.eq.0.OR.n.eq.-1) then
+	print*,"Check input parameters: n=0?, nmin <3,n,nmax missing?"
+        goto 220
+        else if(nmax.lt.nmin) then
+	print*,"nmax is less than nmin"
+        goto 220
+        endif
+
+        if(ntriang.lt.nmax) then
+        print*,'Nmax must be less than',ntriang+1,'in this instance.'
+        goto 220
+        endif  
+
+c If value of edgefrac was not specified upon input, then we assume that
+c the user wants files with specific number of triangles.
+	if(edgefrac.gt.0.0) goto 110
+	if(nmax.eq.nmin)then
+	 n = 1
+	goto 100
+	endif
+	if(n.gt.1) ndelta = (nmax-nmin)/(n-1)
+
+100     print *, ' '
+	print *, 'Target values of n'
+	do j=1,n
+	nt(j) = nmin + (j-1)*ndelta
+ 	print *, '             ', nt(j)
+	end do
+        print *, ' '
+
+c Make two standard runs of coalesce to collect data of N(e).
+	call scoalesce(con3,0.7,n1,-1)
+	call scoalesce(con3,1.0,n2,-1)
+	print *, 'initial n ',n1,n2
+
+c Generate two parameters of the formula N(e) = N/(1+ a*e^p): a, p
+	y2 = log(float(ntriang)/float(n2) -1.0)
+	y1 = log(float(ntriang)/float(n1) -1.0)
+	x2 = log(1.0)
+	x1 = log(0.7)
+	p = (y2-y1)/(x2-x1)
+	a = exp(y2-p*x2)
+	print *, ' p = ', p
+	print *, ' a = ', a
+
+c Generate list of edgfrac values from formula & call scoalesce.
+	do j=1,n
+	e(j) = 1.000*((float(ntriang)/float(nt(j)) -1.0)/a)**(1/p)
+	print *, ' e = ',e(j)
+	call scoalesce(con3,e(j),nn(j),1)
+	print *, 'Target n         ',nt(j)
+        print *, 'Actual coalesce n',nn(j)
+        print *, ' '
+	end do
+	goto 220
+110	continue
+	call scoalesce(con3,edgefrac,n3,1)
+        print *, 'Actual coalesce n',n3
+	
+220	stop
+	end program
+
+       SUBROUTINE INPUT(CON3,NMAX,NMIN,N,WM,edgefrac)
+
+       CHARACTER*80 CON3,ARG
+
+       NARG = IARGC()
+       IF(NARG.LT.2) then
+      PRINT*,'Usage: rcoal -f filename -nmax val -nmin val '
+      PRINT*,'-n numb '
+      PRINT*,'Usage: rcoal -f filename -e val '
+	STOP
+       ENDIF
+
+       DO K=1,NARG
+       CALL GETARG(K,ARG)
+       IF (ARG(1:5).EQ.'-f') THEN
+       CALL GETARG(K+1,ARG)
+       CON3 = ARG
+       END IF
+       IF (ARG(1:5).EQ.'-nmax') THEN
+       CALL GETARG(K+1,ARG)
+       READ(ARG,*) NMAX
+       ENDIF
+       IF (ARG(1:5).EQ.'-nmin') THEN
+       CALL GETARG(K+1,ARG)
+       READ(ARG,*) NMIN
+       ENDIF
+       IF (ARG(1:2).EQ.'-n') THEN
+       CALL GETARG(K+1,ARG)
+       READ(ARG,*) N
+       ENDIF
+       IF (ARG(1:3).EQ.'-mw') THEN                             
+       CALL GETARG(K+1,ARG)                                   
+       READ(ARG,*) WM
+       ENDIF                                                  
+       IF (ARG(1:2).EQ.'-e') THEN                             
+       CALL GETARG(K+1,ARG)                                   
+       READ(ARG,*) edgefrac 
+       ENDIF                                                  
+       ENDDO
+
+       RETURN
+       END
+
