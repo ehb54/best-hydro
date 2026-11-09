@@ -532,6 +532,8 @@ c     vn would let it overwrite its own arguments.
       iv2 = vn(k,2)
       call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
+c     The coalescence above may have deleted this triangle too.
+      if(vn(indx(j),1).ne.-1) then
          do n=1,3
             vx(n)=x(vn(indx(j),1),n)
             vy(n)=x(vn(indx(j),2),n)
@@ -547,6 +549,7 @@ c     Pass copies, as above.
       iv2 = vn(indx(j),L2)
       call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
+      endif
 	iflag = 1
 		endif
 		
