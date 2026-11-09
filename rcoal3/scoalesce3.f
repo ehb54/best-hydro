@@ -127,10 +127,10 @@ c	the number of triangles desired. If np is not -1, output will be produced.
 	integer,dimension(:,:),allocatable :: vn,edgn,sedg
       real,dimension(:,:),allocatable :: v1,v2,v3,x
       real,dimension(:),allocatable :: area,edglen
-	integer, dimension(:), allocatable :: indx,nsut,nsutc 
+	integer, dimension(:), allocatable :: indx,nsut,nsutc,iobv
 
 	dimension::bins(50),bins2(50),aux(3)
-	dimension::ndist1(50),ndist2(50),iobv(200),oarea(200)
+	dimension::ndist1(50),ndist2(50),oarea(200)
 	dimension::vx(3),vy(3),vz(3)
       integer first,second
 	logical connolly, sanner, smart,verb,dangle
@@ -454,7 +454,8 @@ c	RESHAPING SLENDER OBTUSE TRIANGLES
 	slender = 0.97
 	slenderfrac = slender/(1+slender)
 	nobtuse = 0
-	allocate(indx(200))
+c     One entry per triangle at most, so the list cannot overflow.
+	allocate(indx(ntriang),iobv(ntriang))
 	slenderloop: do j=1, ntriang
 	if(vn(j,1).ne.-1) then
 c	Compute the edge lengths
@@ -482,12 +483,6 @@ c	Test for slender obtuse: min/max greater than 1/3.
 		if(slenmin/slenmax.ge.0.33) then
 c	A slender obtuse triangle has been found. Store the triangle index.
 	nobtuse = nobtuse +1
-		if(nobtuse.gt.200) then
-	print *,'There are greater than 200 slender obtuse triangles'
-	print *,'Program will now terminate. Rerun with larger edgfrac,'
-	print *, 'or recompile with a larger allocation for indx. '
-		stop
-		endif
 	indx(nobtuse) = j
 c	Determine which vertex is the obtuse one. Store it in iobv.
 	if(slen32.gt.slen21.and.slen32.gt.slen31) iobv(nobtuse) = 1
