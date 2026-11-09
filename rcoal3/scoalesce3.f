@@ -485,9 +485,14 @@ c	A slender obtuse triangle has been found. Store the triangle index.
 	nobtuse = nobtuse +1
 	indx(nobtuse) = j
 c	Determine which vertex is the obtuse one. Store it in iobv.
-	if(slen32.gt.slen21.and.slen32.gt.slen31) iobv(nobtuse) = 1
-	if(slen31.gt.slen21.and.slen31.gt.slen32) iobv(nobtuse) = 2
-	if(slen21.gt.slen31.and.slen21.gt.slen32) iobv(nobtuse) = 3
+c     Break ties in a fixed order, so that iobv is always set.
+      if(slen32.ge.slen21.and.slen32.ge.slen31) then
+      iobv(nobtuse) = 1
+      else if(slen31.ge.slen21.and.slen31.ge.slen32) then
+      iobv(nobtuse) = 2
+      else
+      iobv(nobtuse) = 3
+      endif
 
 		endif
 	endif
