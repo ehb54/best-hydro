@@ -566,7 +566,11 @@ c	1 iobv(j)),' area=',areanew
 		if(verb) print *,'Opposite:new area too small, will coalesce'
 
 		
-	call slender_del(vn(k,1),vn(k,2),x,vn,ntriang,idelete)
+c     Pass copies: slender_del writes -1 into vn, so passing elements of
+c     vn would let it overwrite its own arguments.
+      iv1 = vn(k,1)
+      iv2 = vn(k,2)
+      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
          do n=1,3
             vx(n)=x(vn(indx(j),1),n)
@@ -578,8 +582,10 @@ c	print *,'match:',vn(k,1),vn(k,2),vn(k,3),' area=',areanew
 		if(areanew.lt.0.06) then
 		if (verb) print *,'Obtuse: new area too small, will coalesce'
 	
-	call slender_del(vn(indx(j),L1),vn(indx(j),L2),x,vn,ntriang,
-	1 idelete)
+c     Pass copies, as above.
+      iv1 = vn(indx(j),L1)
+      iv2 = vn(indx(j),L2)
+      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
 	iflag = 1
 		endif
