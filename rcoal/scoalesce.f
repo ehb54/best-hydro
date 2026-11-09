@@ -121,10 +121,12 @@ c		Version 2.6
 	dimension::vx(3),vy(3),vz(3)
       integer first,second
 	logical connolly, sanner, smart,verb,dangle
+      common /lnkcnt/ nlinkskip
        CHARACTER*80 CON3,CON3C3V,OUTPUT,OUTPUTHIS,input,sann1,sann2,
      $ smar,CON3b
 
 	connolly = .true.
+      nlinkskip = 0
 	sanner = .false.
 	smart = .false.
 	verb = .false.
@@ -709,6 +711,7 @@ c	if(modulo(nj,20).eq.1) pause
 	print *,'Average edgelength (A)= ', avelength/nedge
 	print *, 'Cut-off length (A) = ', cutofflength
 	print *,'Found',nobtuse,' slender obtuse triangles, processed',icon
+      print *,'Collapses skipped by the topology check: ',nlinkskip
 
 
 c	OUTPUT AND HISTOGRAM
@@ -943,113 +946,131 @@ c       implicit double precision (a-h,o-z)
 	return
 	end
 
-	subroutine slender_del(v1,v2,x,vn,ntrg,idelete)
-	integer v1,v2,first,second,vn,tag1,tag2
-c     tag1, tag2 list the triangles sharing v1, v2.  Sized to the mesh:
-c     a vertex of an msroll triangulation can be shared by hundreds.
-	dimension vn(ntrg,3),x(ntrg,3),tag1(ntrg),tag2(ntrg)
-c	This subroutine finds triangles with vertices equal to v1,v2 from the
-c	list of vertices in vn(ntrg,3). Then it deletes the original triangle
-c	with these vertices and coalesces the triangles sharing v1 into v2 or
-c	viceversa, moving the vertex shared by the least number of triangles.
-c	The slender triangle is tagged for "deletion" by setting its edge vertices
-c	to -1.  Further processing can ignore these vertices.
+      subroutine slender_del(v1,v2,x,vn,ntrg,idelete)
+c     Collapses the small edge v1-v2: deletes the triangles on the edge
+c     (setting their vertex numbers to -1) and moves the vertex shared by
+c     fewer triangles onto the other.  x is not used.
+c     The collapse is skipped, and counted in /lnkcnt/, unless exactly two
+c     triangles share the edge and v1, v2 have no common neighbours other
+c     than those two triangles' third vertices.  A collapse that fails
+c     this test glues two triangles together, leaving duplicate triangles
+c     and non-manifold edges, which later deletions can turn into holes.
+      integer v1,v2,first,second,vn,tag1,tag2,nb1,nb2,iapex
+      dimension vn(ntrg,3),x(ntrg,3),tag1(ntrg),tag2(ntrg)
+      dimension nb1(2*ntrg),nb2(2*ntrg),iapex(2)
+      logical has1,has2,dupl,found
+      common /lnkcnt/ nlinkskip
 
-	first = 0
-	second = 0
+c     Find the triangles on v1 and on v2, their other vertices, and the
+c     third vertices of the triangles on the edge.
+      first = 0
+      second = 0
+      nboth = 0
+      n1 = 0
+      n2 = 0
+      do k = 1,ntrg
+      if(vn(k,1).ne.-1) then
+      has1 = v1.eq.vn(k,1).or.v1.eq.vn(k,2).or.v1.eq.vn(k,3)
+      has2 = v2.eq.vn(k,1).or.v2.eq.vn(k,2).or.v2.eq.vn(k,3)
+      if(has1) then
+      first = first+1
+      tag1(first) = k
+      do m = 1,3
+      if(vn(k,m).ne.v1.and.vn(k,m).ne.v2) then
+      n1 = n1+1
+      nb1(n1) = vn(k,m)
+      endif
+      enddo
+      endif
+      if(has2) then
+      second = second+1
+      tag2(second) = k
+      do m = 1,3
+      if(vn(k,m).ne.v1.and.vn(k,m).ne.v2) then
+      n2 = n2+1
+      nb2(n2) = vn(k,m)
+      endif
+      enddo
+      endif
+      if(has1.and.has2) then
+      nboth = nboth+1
+      if(nboth.le.2) then
+      do m = 1,3
+      if(vn(k,m).ne.v1.and.vn(k,m).ne.v2) iapex(nboth) = vn(k,m)
+      enddo
+      endif
+      endif
+      endif
+      enddo
 
-	do k =1,ntrg
-	nshare = 0
-	if(vn(k,1).ne.-1) then
+c     A vertex with no triangles left: nothing to do.
+      if(first.eq.0.or.second.eq.0) return
 
-		if(v1.eq.vn(k,1).or.v1.eq.vn(k,2).or.v1.eq.vn(k,3)) then
-c This triangle contains the first edge vertex.
-		first = first+1
-		tag1(first) = k
+c     The topology check.
+      if(nboth.ne.2) goto 900
+      if(iapex(1).eq.iapex(2)) goto 900
+      ncommon = 0
+      do i = 1,n1
+      dupl = .false.
+      do j = 1,i-1
+      if(nb1(j).eq.nb1(i)) then
+      dupl = .true.
+      exit
+      endif
+      enddo
+      if(.not.dupl) then
+      found = .false.
+      do j = 1,n2
+      if(nb2(j).eq.nb1(i)) then
+      found = .true.
+      exit
+      endif
+      enddo
+      if(found) ncommon = ncommon+1
+      endif
+      enddo
+      if(ncommon.ne.2) goto 900
 
-	nshare = nshare +1
-c  	print *,' first= ',first,' triangle= ',k,vn(k,1),vn(k,2),vn(k,3)
-		end if
+c     Delete the two triangles on the edge.
+      do i = 1,first
+      k = tag1(i)
+      if(v2.eq.vn(k,1).or.v2.eq.vn(k,2).or.v2.eq.vn(k,3)) then
+      idelete = idelete+1
+      vn(k,1) = -1
+      vn(k,2) = -1
+      vn(k,3) = -1
+      endif
+      enddo
 
-		if(v2.eq.vn(k,1).or.v2.eq.vn(k,2).or.v2.eq.vn(k,3)) then
-c This triangle contains the second, edge vertex.
-		second = second +1
-		tag2(second) = k
+c     Coalesce in the direction of the vertex shared by more triangles.
+      if(second.ge.first) then
+      do i = 1,first
+      k = tag1(i)
+      if(vn(k,1).eq.v1) then
+      vn(k,1) = v2
+      else if(vn(k,2).eq.v1) then
+      vn(k,2) = v2
+      else if(vn(k,3).eq.v1) then
+      vn(k,3) = v2
+      endif
+      enddo
+      else
+      do i = 1,second
+      k = tag2(i)
+      if(vn(k,1).eq.v2) then
+      vn(k,1) = v1
+      else if(vn(k,2).eq.v2) then
+      vn(k,2) = v1
+      else if(vn(k,3).eq.v2) then
+      vn(k,3) = v1
+      endif
+      enddo
+      endif
+      return
 
-	nshare = nshare +1
-c  	print *,'second= ',second,' triangle= ',k,vn(k,1),vn(k,2),vn(k,3)
-		end if
-
-		if(nshare.eq.2) then
-c This triangle contains both edge vertices. Delete it.
-		idelete = idelete + 1
-c 		print *, 'idelete= ',idelete
-c 		print *,' triangle= ',k, vn(k,1),vn(k,2),vn(k,3)
-		vn(k,1) = -1
-		vn(k,2) = -1
-		vn(k,3) = -1
-		end if
-
-	end if
-c	This ends the triangle test.	
-	enddo 
-
-c  Now test that this edge does not have a vertex that had previously been deleted.
-c  In that case, there are no triangles that contain that vertex and
-c  The variable ismall should not be updated because no triangles are deleted.
-c  This occurs if at the end of the loop, there are only firsts or only seconds.
-
-		if(first.eq.0.and.second.gt.0) then
-		return
-c	print *, 'Edge skipped: zero-one'
-		else if(second.eq.0.and.first.gt.0) then
-		return
-c 	print *, 'Edge skipped: one-zero'
-		else if(second.eq.0.and.first.eq.0) then
-		return
-c  It is also possible that neither edge vertex is found; we skip it then also.
-c 	print *, 'Edge skipped: zero-zero'
-		end if
-c 	pause
-
-
-C	COALESCE VERTICES
-c  The tag1, tag2 arrays contain the triangle tags which share the
-c  small edge vertices.  Now we coalesce the vertices in the direction
-c  of the larger of first or second. This minimizes the number of alterations.
-c  However, after coalescing, a new small edge can be formed.  This must be 
-c  tested for later and this new edge treated or small triangles will survive.
-
-		if (second.ge.first) then
-c We assign new coordinates to the dominant vertex, weighted according to the value
-c  of first and second.
-
-		do k = 1,first
-			if(vn(tag1(k),1).eq.v1) then 
-			vn(tag1(k),1) = v2		 
-			else if(vn(tag1(k),2).eq.v1) then 
-			vn(tag1(k),2) = v2
-			else if(vn(tag1(k),3).eq.v1) then 
-			vn(tag1(k),3) = v2
-			end if
-		end do
-
-		else
-
-		do k = 1, second
-			if(vn(tag2(k),1).eq.v2) then 
-			vn(tag2(k),1) = v1
-			else if(vn(tag2(k),2).eq.v2) then 
-			vn(tag2(k),2) = v1			 
-			else if(vn(tag2(k),3).eq.v2) then 
-			vn(tag2(k),3) = v1		 
-			end if
-		end do 
-
-		end if
-c	pause
-	return
-	end
+900   nlinkskip = nlinkskip+1
+      return
+      end
 
 	subroutine dangle_del(ntrg,vn,verb,idang)
 c	This subroutine identifies the triangles with vertices shared with two
