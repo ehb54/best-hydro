@@ -34,7 +34,11 @@ bin/rcoal: $(RCOAL_SRC) | bin
 bin/rcoal3: $(RCOAL3_SRC) | bin
 	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(RCOAL3_SRC)
 
+# Runs the examples and checks the results (needs Perl).
+test: all
+	test/run_tests.sh bin
+
 clean:
 	rm -rf bin
 
-.PHONY: all clean
+.PHONY: all test clean

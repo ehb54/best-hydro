@@ -41,7 +41,8 @@ make LAPACK="-lopenblas"              # or another LAPACK/BLAS
 make LAPACK="-framework Accelerate"   # macOS
 ```
 
-This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. The author compiled with PGI and
+This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. `make test` (with the same
+`LAPACK=...`) runs the examples and checks the results; it needs Perl. The author compiled with PGI and
 `-r8`, so that every REAL is 8 bytes; the Makefile uses gfortran's equivalent,
 `-fdefault-real-8 -fdefault-double-8`. He recommends optimization no higher than `-O2`.
 
