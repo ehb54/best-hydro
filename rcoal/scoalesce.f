@@ -936,7 +936,9 @@ c       implicit double precision (a-h,o-z)
 
 	subroutine slender_del(v1,v2,x,vn,ntrg,idelete)
 	integer v1,v2,first,second,vn,tag1,tag2
-	dimension vn(ntrg,3),x(ntrg,3),tag1(100),tag2(100)
+c     tag1, tag2 list the triangles sharing v1, v2.  Sized to the mesh:
+c     a vertex of an msroll triangulation can be shared by hundreds.
+	dimension vn(ntrg,3),x(ntrg,3),tag1(ntrg),tag2(ntrg)
 c	This subroutine finds triangles with vertices equal to v1,v2 from the
 c	list of vertices in vn(ntrg,3). Then it deletes the original triangle
 c	with these vertices and coalesces the triangles sharing v1 into v2 or
