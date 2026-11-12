@@ -435,7 +435,7 @@ c	SLENDER BASE TRIANGLE ELIMINATION
 c	A small edge has been found.  Now find the triangles that share
 c	 those edge vertices, delete the slender base triangles and coalesce.
 	
-	call slender_del(edgn(indx(j),1),edgn(indx(j),2),x,vn,
+	call slender_del(edgn(indx(j),1),edgn(indx(j),2),x,nvert,vn,
 	1 ntriang,idelete)
 	
 	end do 
@@ -598,7 +598,7 @@ c     Pass copies: slender_del writes -1 into vn, so passing elements of
 c     vn would let it overwrite its own arguments.
       iv1 = vn(k,1)
       iv2 = vn(k,2)
-      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
+      call slender_del(iv1,iv2,x,nvert,vn,ntriang,idelete)
 		endif
 c     The coalescence above may have deleted this triangle too.
       if(vn(indx(j),1).ne.-1) then
@@ -615,7 +615,7 @@ c	print *,'match:',vn(k,1),vn(k,2),vn(k,3),' area=',areanew
 c     Pass copies, as above.
       iv1 = vn(indx(j),L1)
       iv2 = vn(indx(j),L2)
-      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
+      call slender_del(iv1,iv2,x,nvert,vn,ntriang,idelete)
 		endif
       endif
       endif
@@ -978,17 +978,18 @@ c       implicit double precision (a-h,o-z)
 	return
 	end
 
-      subroutine slender_del(v1,v2,x,vn,ntrg,idelete)
+      subroutine slender_del(v1,v2,x,nvx,vn,ntrg,idelete)
 c     Collapses the small edge v1-v2: deletes the triangles on the edge
 c     (setting their vertex numbers to -1) and moves the vertex shared by
-c     fewer triangles onto the other.  x is not used.
+c     fewer triangles onto the other.  x holds the nvx vertex coordinates.
 c     The collapse is skipped, and counted in /lnkcnt/, unless exactly two
 c     triangles share the edge and v1, v2 have no common neighbours other
 c     than those two triangles' third vertices.  A collapse that fails
 c     this test glues two triangles together, leaving duplicate triangles
 c     and non-manifold edges, which later deletions can turn into holes.
+c     A zero-length edge is always collapsed (see below).
       integer v1,v2,first,second,vn,tag1,tag2,nb1,nb2,iapex
-      dimension vn(ntrg,3),x(ntrg,3),tag1(ntrg),tag2(ntrg)
+      dimension vn(ntrg,3),x(nvx,3),tag1(ntrg),tag2(ntrg)
       dimension nb1(2*ntrg),nb2(2*ntrg),iapex(2)
       logical has1,has2,dupl,found
       common /lnkcnt/ nlinkskip
@@ -1038,7 +1039,13 @@ c     third vertices of the triangles on the edge.
 c     A vertex with no triangles left: nothing to do.
       if(first.eq.0.or.second.eq.0) return
 
-c     The topology check.
+c     The topology check, for edges of nonzero length.  msroll can give
+c     two vertex numbers the same position; the edge between them is
+c     always collapsed, as before: that changes no geometry, while
+c     skipping it would leave triangles of zero area.
+      d2 = (x(v1,1)-x(v2,1))**2+(x(v1,2)-x(v2,2))**2
+     $   +(x(v1,3)-x(v2,3))**2
+      if(d2.gt.1.0e-10) then
       if(nboth.ne.2) goto 900
       if(iapex(1).eq.iapex(2)) goto 900
       ncommon = 0
@@ -1062,8 +1069,9 @@ c     The topology check.
       endif
       enddo
       if(ncommon.ne.2) goto 900
+      endif
 
-c     Delete the two triangles on the edge.
+c     Delete the triangles on the edge.
       do i = 1,first
       k = tag1(i)
       if(v2.eq.vn(k,1).or.v2.eq.vn(k,2).or.v2.eq.vn(k,3)) then
