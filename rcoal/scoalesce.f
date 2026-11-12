@@ -819,6 +819,11 @@ c       This creates a bimodal distribution of points centered
 c      around 10% of average triangle area and 1.0   A**2
 
       write(15,*)"Histogram bins and count follows:"
+c     The counts start from zero; they were not set before.
+      do n=1,50
+      ndist1(n) = 0
+      ndist2(n) = 0
+      end do
       numbin=12
       call bin(0.1*avarea,0.5,bins,numbin+1)
 c     do n=1,numbin
