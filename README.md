@@ -27,6 +27,7 @@ requests.
 | `rcoal3/` | rcoal 3.0 (2012), which also reads MSMS triangulations |
 | `doc/` | the BEST Hydrodynamics Package manual, version 3.9 (2014) |
 | `examples/` | a sample BEST input, the rcoal 2.0 test case, and an rcoal 3.0 example (crambin, MSMS) |
+| `mesher/` | `sesmesh`, a solvent-excluded surface mesher written for this repository, not by the author; see `mesher/README.md` |
 
 `index.f` is a sort routine used only by Coalesce. It is in each directory, as
 distributed.
@@ -41,7 +42,8 @@ make LAPACK="-lopenblas"              # or another LAPACK/BLAS
 make LAPACK="-framework Accelerate"   # macOS
 ```
 
-This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. The author compiled with PGI and
+This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`, and `bin/sesmesh` with a C++17
+compiler (`make OPENMP=` without OpenMP; `make test-sesmesh` runs its tests). The author compiled with PGI and
 `-r8`, so that every REAL is 8 bytes; the Makefile uses gfortran's equivalent,
 `-fdefault-real-8 -fdefault-double-8`. He recommends optimization no higher than `-O2`.
 
@@ -51,7 +53,10 @@ thousands. Its run time grows as N³.
 ## Running
 
 The input is a triangulated molecular surface. Connolly's MSROLL is not included: it
-is a commercial program. rcoal 3.0 also reads triangulations from Sanner's MSMS. The
+is a commercial program. rcoal 3.0 also reads triangulations from Sanner's MSMS.
+`sesmesh` writes both formats from the same spheres and probe radius
+(`sesmesh -p 1.5 -g 0.5 -x 0.3,0.25,0.2 protein.xyzr`); it is new, and its meshes have
+not yet been compared with msroll's through rcoal and BEST. The
 manual in `doc/` describes each step and its options; in short:
 
 ```bash
