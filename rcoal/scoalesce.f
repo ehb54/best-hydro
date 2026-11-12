@@ -123,6 +123,11 @@ c		Version 2.6
 	logical connolly, sanner, smart,verb,dangle
       logical lflip
       common /lnkcnt/ nlinkskip
+      common /zarea/ nzero
+      common /outlst/ nout
+      character*80 outf
+      common /outnam/ outf(20)
+      character*51 cv1,cv2,cv3
        CHARACTER*80 CON3,CON3C3V,OUTPUT,OUTPUTHIS,input,sann1,sann2,
      $ smar,CON3b
 
@@ -780,6 +785,23 @@ c     outputhis = output(1:l+4)//'.his'
 
 c	Output is suppressed if the np flag has value -1
 	if(np.eq.-1) goto 250
+c     A triangle with two vertices at the same position has zero area,
+c     and BEST gives NaN for it.  msroll can give such vertices where
+c     its surface folds onto itself.  A triangulation with one is not
+c     written; rcoal then reports an error.  The positions are compared
+c     as written to the output file, which is what BEST reads.
+      nzero = 0
+      do m=1,npoly
+      write(cv1,'(3e17.8)') (v1(m,n),n=1,3)
+      write(cv2,'(3e17.8)') (v2(m,n),n=1,3)
+      write(cv3,'(3e17.8)') (v3(m,n),n=1,3)
+      if(cv1.eq.cv2.or.cv2.eq.cv3.or.cv1.eq.cv3) nzero = nzero+1
+      end do
+      if(nzero.gt.0) then
+      print *,'Triangles with two vertices at the same position: ',
+     $ nzero,'; not written'
+      goto 250
+      endif
 
        open(15,file=outputhis)
 c      open(14,file=output)
@@ -878,11 +900,11 @@ c
 12      format(9e17.8)
         end do
       close(14)
-	print *, ' '
-	print *,' Output files written:'
-        print *,'                      ',output
-        print *,'                      ',outputhis
-	print *, ' '
+c     rcoal lists the files at the end, once all are written.
+      nout = nout+1
+      outf(nout) = output
+      nout = nout+1
+      outf(nout) = outputhis
 
 250	continue
 
