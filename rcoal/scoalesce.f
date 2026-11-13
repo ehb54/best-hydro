@@ -113,11 +113,11 @@ c		Version 2.6
 	integer,dimension(:,:),allocatable :: vn,edgn,sedg
       real,dimension(:,:),allocatable :: v1,v2,v3,x
       real,dimension(:),allocatable :: area,edglen
-	integer, dimension(:), allocatable :: indx,nsut,nsutc 
+	integer, dimension(:), allocatable :: indx,nsut,nsutc,iobv
 
 
 	dimension::bins(50),bins2(50),aux(3)
-	dimension::ndist1(50),ndist2(50),iobv(200),oarea(200)
+	dimension::ndist1(50),ndist2(50),oarea(200)
 	dimension::vx(3),vy(3),vz(3)
       integer first,second
 	logical connolly, sanner, smart,verb,dangle
@@ -414,7 +414,8 @@ c	RESHAPING SLENDER OBTUSE TRIANGLES
 	slender = 0.97
 	slenderfrac = slender/(1+slender)
 	nobtuse = 0
-	allocate(indx(200))
+c     One entry per triangle at most, so the list cannot overflow.
+	allocate(indx(ntriang),iobv(ntriang))
 	slenderloop: do j=1, ntriang
 	if(vn(j,1).ne.-1) then
 c	Compute the edge lengths
@@ -442,17 +443,16 @@ c	Test for slender obtuse: min/max greater than 1/3.
 		if(slenmin/slenmax.ge.0.33) then
 c	A slender obtuse triangle has been found. Store the triangle index.
 	nobtuse = nobtuse +1
-		if(nobtuse.gt.200) then
-	print *,'There are greater than 200 slender obtuse triangles'
-	print *,'Program will now terminate. Rerun with larger edgfrac,'
-	print *, 'or recompile with a larger allocation for indx. '
-		stop
-		endif
 	indx(nobtuse) = j
 c	Determine which vertex is the obtuse one. Store it in iobv.
-	if(slen32.gt.slen21.and.slen32.gt.slen31) iobv(nobtuse) = 1
-	if(slen31.gt.slen21.and.slen31.gt.slen32) iobv(nobtuse) = 2
-	if(slen21.gt.slen31.and.slen21.gt.slen32) iobv(nobtuse) = 3
+c     Break ties in a fixed order, so that iobv is always set.
+      if(slen32.ge.slen21.and.slen32.ge.slen31) then
+      iobv(nobtuse) = 1
+      else if(slen31.ge.slen21.and.slen31.ge.slen32) then
+      iobv(nobtuse) = 2
+      else
+      iobv(nobtuse) = 3
+      endif
 
 		endif
 	endif
@@ -531,8 +531,14 @@ c	1 iobv(j)),' area=',areanew
 		if(verb) print *,'Opposite:new area too small, will coalesce'
 
 		
-	call slender_del(vn(k,1),vn(k,2),x,vn,ntriang,idelete)
+c     Pass copies: slender_del writes -1 into vn, so passing elements of
+c     vn would let it overwrite its own arguments.
+      iv1 = vn(k,1)
+      iv2 = vn(k,2)
+      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
+c     The coalescence above may have deleted this triangle too.
+      if(vn(indx(j),1).ne.-1) then
          do n=1,3
             vx(n)=x(vn(indx(j),1),n)
             vy(n)=x(vn(indx(j),2),n)
@@ -543,9 +549,12 @@ c	print *,'match:',vn(k,1),vn(k,2),vn(k,3),' area=',areanew
 		if(areanew.lt.0.06) then
 		if (verb) print *,'Obtuse: new area too small, will coalesce'
 	
-	call slender_del(vn(indx(j),L1),vn(indx(j),L2),x,vn,ntriang,
-	1 idelete)
+c     Pass copies, as above.
+      iv1 = vn(indx(j),L1)
+      iv2 = vn(indx(j),L2)
+      call slender_del(iv1,iv2,x,vn,ntriang,idelete)
 		endif
+      endif
 	iflag = 1
 		endif
 		
@@ -784,6 +793,11 @@ c       This creates a bimodal distribution of points centered
 c      around 10% of average triangle area and 1.0   A**2
 
       write(15,*)"Histogram bins and count follows:"
+c     The counts start from zero; they were not set before.
+      do n=1,50
+      ndist1(n) = 0
+      ndist2(n) = 0
+      end do
       numbin=12
       call bin(0.1*avarea,0.5,bins,numbin+1)
 c     do n=1,numbin
@@ -936,7 +950,9 @@ c       implicit double precision (a-h,o-z)
 
 	subroutine slender_del(v1,v2,x,vn,ntrg,idelete)
 	integer v1,v2,first,second,vn,tag1,tag2
-	dimension vn(ntrg,3),x(ntrg,3),tag1(100),tag2(100)
+c     tag1, tag2 list the triangles sharing v1, v2.  Sized to the mesh:
+c     a vertex of an msroll triangulation can be shared by hundreds.
+	dimension vn(ntrg,3),x(ntrg,3),tag1(ntrg),tag2(ntrg)
 c	This subroutine finds triangles with vertices equal to v1,v2 from the
 c	list of vertices in vn(ntrg,3). Then it deletes the original triangle
 c	with these vertices and coalesces the triangles sharing v1 into v2 or
