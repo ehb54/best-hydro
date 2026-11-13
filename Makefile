@@ -3,16 +3,21 @@
 #   make                                 Linux with reference LAPACK/BLAS
 #   make LAPACK="-lopenblas"             another LAPACK/BLAS
 #   make LAPACK="-framework Accelerate"  macOS
+#   make OPENMP=                         BEST without OpenMP
 #
 # The author built these with PGI and -r8, which makes every REAL 8 bytes; the
 # gfortran equivalent is -fdefault-real-8 -fdefault-double-8.  He recommends
 # optimization no higher than -O2.  Some source lines run past column 72, which
 # gfortran rejects by default, hence -ffixed-line-length-none.
+#
+# BEST fills its matrix with OpenMP threads (OMP_NUM_THREADS); the LAPACK
+# calls use the threads of the LAPACK/BLAS library (e.g. OPENBLAS_NUM_THREADS).
 
 FC     = gfortran
 FFLAGS = -O2
 R8     = -fdefault-real-8 -fdefault-double-8
 FIXED  = -ffixed-line-length-none
+OPENMP = -fopenmp
 LAPACK = -llapack -lblas
 
 BEST_SRC   = best/best.f best/input.f best/tgetgr.f best/triangleint.f \
@@ -26,7 +31,7 @@ bin:
 	mkdir -p bin
 
 bin/best: $(BEST_SRC) | bin
-	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(BEST_SRC) $(LAPACK)
+	$(FC) $(FFLAGS) $(OPENMP) $(R8) $(FIXED) -o $@ $(BEST_SRC) $(LAPACK)
 
 bin/rcoal: $(RCOAL_SRC) | bin
 	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(RCOAL_SRC)

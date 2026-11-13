@@ -105,6 +105,7 @@ C	Fung in 2020.  This is new verson 4.0 distribution.
 C	11/13/2026 E. H. Brookes: The -vc calculation no longer inverts GR.  DIFCO and VISCO
 C	solve for all their flows at once with the LU factors of GR (DGETRS).  This is much
 C	faster, and removes the rounding error of the explicit inverse from the -vc results.
+C	11/13/2026 E. H. Brookes: TGETGR fills GR in parallel when compiled with OpenMP.
 	
 
 c      ARRAY DIMENSIONS
