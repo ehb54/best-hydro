@@ -9,6 +9,7 @@ c  Aragon.  7/10/2003
 
        common /dots/ d212c,d2132,d2121,d2c2c,d322c,d3232,d2c1c,
      $ d211c,d2131,d1c1c,d1c31,d3131,d3c31,d3c3c,d3231,d3c32
+!$OMP THREADPRIVATE(/dots/)
        dimension v21(3),v31(3),v32(3),v1c(3),v2c(3),v3c(3)
        DIMENSION G(3,3),w(21),y(21),x(nar,3),V1(NAR,3),V2(NAR,3),
      $ V3(NAR,3),AREA(NAR)
@@ -197,6 +198,7 @@ c  Now compute the tensor components of Gij
 	double precision function h(y)
 	common /dots/ d212c,d2132,d2121,d2c2c,d322c,d3232,d2c1c,
      $ d211c,d2131,d1c1c,d1c31,d3131,d3c31,d3c3c,d3231,d3c32
+!$OMP THREADPRIVATE(/dots/)
 	h = DLog((D212c+D2132*y+DSqrt(D2121)*DSqrt(D2c2c+ 
      $ 2.0*y*D322c+y*y*D3232))/(D211c+D2131*y+DSqrt(D2121)*
      $ DSqrt(D1c1c+2*D1c31*y+D3131*y*y)))/DSqrt(D2121)
@@ -206,6 +208,7 @@ c  Now compute the tensor components of Gij
 	double precision function hx(x)
 	common /dots/ d212c,d2132,d2121,d2c2c,d322c,d3232,d2c1c,
      $ d211c,d2131,d1c1c,d1c31,d3131,d3c31,d3c3c,d3231,d3c32
+!$OMP THREADPRIVATE(/dots/)
 	 a= (-D1c31 - x*D2131)/
      $ DSqrt(D1c1c+2.0*x*D211c+x*x*D2121)
 	 b = (-x*D3231+D3c31)/
@@ -219,6 +222,7 @@ c  Now compute the tensor components of Gij
 	double precision function hy(y)
 	common /dots/ d212c,d2132,d2121,d2c2c,d322c,d3232,d2c1c,
      $ d211c,d2131,d1c1c,d1c31,d3131,d3c31,d3c3c,d3231,d3c32
+!$OMP THREADPRIVATE(/dots/)
 	a= (D211c + y*D2131)/
      $  DSqrt(D1c1c+2.0*y*D1c31+y*y*D3131)
 	b= (y*D2132 + D212c)/
@@ -232,6 +236,7 @@ c  Now compute the tensor components of Gij
 	double precision function hxy(y)
 	common /dots/ d212c,d2132,d2121,d2c2c,d322c,d3232,d2c1c,
      $ d211c,d2131,d1c1c,d1c31,d3131,d3c31,d3c3c,d3231,d3c32
+!$OMP THREADPRIVATE(/dots/)
 	a= DSqrt(D1c1c + 2.0*y*D1c31 + y*y*D3131)
 	b= (y*D211c - D2c1c - 2.0*y*D1c31 - y*D2131 - 
      $   y*y*D3231)/DSqrt(D2c2c + 2.0*y*D322c + y*y*D3232)

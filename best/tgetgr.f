@@ -150,7 +150,10 @@ c	The n1 index selects the external triangle, the n2 index
 c	is the triangle we integrate over.  We need the InCenter
 c	of the external triangle, and we need the vertices of the
 c	triangle being integrated over. These are formed inside triangleint.
+c	The pairs are independent.  When compiled with OpenMP, the rows N1 are
+c	shared out among threads; each thread has its own copy of COMMON /dots/.
 
+!$OMP PARALLEL DO PRIVATE(N2,I0,J0,J,G) SCHEDULE(DYNAMIC,8)
        DO N1=1,NAR
        DO N2=1,NAR
        IF (N1.NE.N2) THEN
@@ -167,6 +170,7 @@ c  area.  Thus, when triangleint multiplies the integrals by the area, it is don
        ENDIF
        ENDDO
        ENDDO
+!$OMP END PARALLEL DO
        RETURN
        END
 

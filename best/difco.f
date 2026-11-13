@@ -1,12 +1,12 @@
        SUBROUTINE DIFCO(OUTFNM2,NAR,X,GR,AREA,
-     $ ICOV,INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV,WORK)
+     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV)
 
 c      THE DIFFUSION TENSORS ARE DETERMINED IN THIS SUBROUTINE
 
        DIMENSION FTOTH(3),TTOTH(3),OMGA(3),D(3),V(3,3),U(3),
      $ DTR(3,3),DRR(3,3),DTT(3,3),UU(3,3),AUX(3,3),URC(3),UDR(3),
      $ GG(3,3),RR(3,3),X(NAR,3),GR(3*NAR,3*NAR),AREA(NAR),
-     $ F(NAR,3),B(3*NAR),TQ(NAR,3),IPIV(3*NAR),WORK(3*NAR)
+     $ F(NAR,3),B(3*NAR,6),TQ(NAR,3),IPIV(3*NAR)
        CHARACTER*80 OUTFNM2
        REAL KTT(3,3),KTR(3,3),KRT(3,3),KRR(3,3),KTTINV(3,3)
 
@@ -14,11 +14,38 @@ c      THE DIFFUSION TENSORS ARE DETERMINED IN THIS SUBROUTINE
 
 C      BE MAIN LOOP: COMPUTE THE FORCES AND TORQUES FOR EACH FLOW
 c      The flows correspond to three orthogonal translations, and three orthogonal
-c      rotations.  The translation velocity is the U array and the angular velocity 
+c      rotations.  The translation velocity is the U array and the angular velocity
 c      is the array OMGA. The velocity has units of A/s, and the angular velocity
 c      has units of 1/s. This assumes the triangule coordinates were input in A.
 
-       OPEN(12,FILE=OUTFNM2,STATUS='OLD',POSITION='APPEND') 
+C      B(:,MX) contains the total body velocity for flow MX, composed of the sum
+C      of the translational velocity u and the rotational velocity omga X x:
+C      unit translations along x,y,z for MX=1-3, unit rotations about x,y,z for MX=4-6.
+
+       DO N=1,NAR
+       I0=3*(N-1)
+       DO MX=1,6
+       B(I0+1,MX)=0.0
+       B(I0+2,MX)=0.0
+       B(I0+3,MX)=0.0
+       ENDDO
+       B(I0+1,1)=1.0
+       B(I0+2,2)=1.0
+       B(I0+3,3)=1.0
+       B(I0+2,4)=-x(n,3)
+       B(I0+3,4)= x(n,2)
+       B(I0+1,5)= x(n,3)
+       B(I0+3,5)=-x(n,1)
+       B(I0+1,6)=-x(n,2)
+       B(I0+2,6)= x(n,1)
+       enddo
+
+C      Call the LAPACK computational routine to solve the linear system of equations
+C      for all six flows at once, with the LU factors of GR.
+
+       CALL DGETRS('N',NAR3,6,GR,NAR3,IPIV,B,NAR3,INFO)
+
+       OPEN(12,FILE=OUTFNM2,STATUS='OLD',POSITION='APPEND')
        WRITE(12,*) ' **** TRANSLATION/ROTATION FLOWS ****'
        DO 100 MX=1,6
        OMGA(1)=0.0
@@ -38,62 +65,17 @@ c      has units of 1/s. This assumes the triangule coordinates were input in A.
        WRITE(12,412)OMGA(1),OMGA(2),OMGA(3)
 412    FORMAT(1X,' OMGA(X-Z) =',3F10.3,' RAD/S',/)
 
-C      B contains the total body velocity, composed of the sum of the translational
-C      velocity u and the rotational velocity omga X x.
-
-       DO N=1,NAR
-       I0=3*(N-1)
-       B(I0+1)=U(1)+(omga(2)*x(n,3)-omga(3)*x(n,2))
-       B(I0+2)=U(2)+(omga(3)*x(n,1)-omga(1)*x(n,3))
-       B(I0+3)=U(3)+(omga(1)*x(n,2)-omga(2)*x(n,1))
-       enddo
-
-C      Call the LAPACK computational routine to solve the linear system of equations
-C      OR INVERT GR & COMPUTE B*GR^-1 IF THE VISCOSITY CENTER IS TO BE DETERMINED
-
-       IF(ICOV.EQ.0) THEN
-       CALL DGETRS('N',NAR3,1,GR,NAR3,IPIV,B,NAR3,INFO)
-       ELSE
-       IF(MX.EQ.1) CALL DGETRI(NAR3,GR,NAR3,IPIV,WORK,NAR3,INFO)
-       ENDIF
-
 C      CALCULATE THE STRESS FORCE
 
-       IF(ICOV.EQ.0) THEN
        DO N = 1,NAR
        I0 = 3*(N-1)
-       F(N,1) = B(I0+1)
-       F(N,2) = B(I0+2)
-       F(N,3) = B(I0+3)
+       F(N,1) = B(I0+1,MX)
+       F(N,2) = B(I0+2,MX)
+       F(N,3) = B(I0+3,MX)
        TQ(N,1) = (X(N,2)*F(N,3)-X(N,3)*F(N,2))
        TQ(N,2) = (X(N,3)*F(N,1)-X(N,1)*F(N,3))
        TQ(N,3) = (X(N,1)*F(N,2)-X(N,2)*F(N,1))
        ENDDO
-    
-       ELSE
- 
-       DO N1 = 1,NAR
-       I0 = 3*(N1-1)
-       TEMP1 = 0.0
-       TEMP2 = 0.0
-       TEMP3 = 0.0
-       DO N2 = 1,NAR
-       J0 = 3*(N2-1)
-       TEMP1 = TEMP1 + B(J0+1)*GR(I0+1,J0+1) + B(J0+2)*GR(I0+1,J0+2) 
-     $               + B(J0+3)*GR(I0+1,J0+3)
-       TEMP2 = TEMP2 + B(J0+1)*GR(I0+2,J0+1) + B(J0+2)*GR(I0+2,J0+2)
-     $               + B(J0+3)*GR(I0+2,J0+3)
-       TEMP3 = TEMP3 + B(J0+1)*GR(I0+3,J0+1) + B(J0+2)*GR(I0+3,J0+2)
-     $               + B(J0+3)*GR(I0+3,J0+3)
-       ENDDO
-       F(N1,1) = TEMP1
-       F(N1,2) = TEMP2
-       F(N1,3) = TEMP3
-       TQ(N1,1) = (X(N1,2)*F(N1,3)-X(N1,3)*F(N1,2))
-       TQ(N1,2) = (X(N1,3)*F(N1,1)-X(N1,1)*F(N1,3))
-       TQ(N1,3) = (X(N1,1)*F(N1,2)-X(N1,2)*F(N1,1))
-       ENDDO
-       ENDIF
 
 C      COMPUTE TOTAL FORCES/TORQUES ON PARTICLE
 

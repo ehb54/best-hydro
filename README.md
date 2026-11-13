@@ -99,6 +99,10 @@ Work since `v4.0-aragon`:
   ([#3](https://github.com/ehb54/best-hydro/pull/3)); its rcoal tests expect closed meshes
   where two of the author's examples are not closed
   ([#8](https://github.com/ehb54/best-hydro/pull/8)).
+- BEST: 17 to 29 times faster with `-vc` on 2000 to 8000 triangles. It solves with the LU
+  factors instead of inverting the matrix, and fills the matrix with OpenMP threads; the
+  results are the same to rounding
+  ([#9](https://github.com/ehb54/best-hydro/pull/9)).
 
 ## References
 
