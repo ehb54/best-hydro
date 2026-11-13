@@ -27,18 +27,32 @@ else
 fi
 
 # rcoal: the author's test case.  Each mesh is regenerated from the edge
-# fraction recorded in its .his file.
+# fraction recorded in its .his file, and must be closed.  It must also
+# reproduce the author's mesh, unless test/expected_rcoal.txt gives another
+# triangle count for it: there the author's mesh is not closed, and rcoal now
+# skips the collapses that made it so.
 d=$work/rcoal; mkdir -p "$d"; cd "$d" || exit 1
 cp "$root/examples/rcoal/test.c3p" "$root/examples/rcoal/test.c3v" .
 for his in "$root"/examples/rcoal/test_*.his; do
    ref=${his%.his}
    name=$(basename "$ref")
    e=$(awk '/Edge fraction/ { print $NF; exit }' "$his")
-   if "$bin/rcoal" -f test.c3p -e "$e" > "$name.out" 2>&1 && [ -f "$name" ] \
-      && perl "$t/meshcmp.pl" "$ref" "$name" 1e-4; then
-      ok "rcoal: -e $e reproduces $name"
+   n=$(awk -v m="$name" '$1 == m { print $2; exit }' "$t/expected_rcoal.txt")
+   if [ -z "$n" ]; then
+      if "$bin/rcoal" -f test.c3p -e "$e" > "$name.out" 2>&1 && [ -f "$name" ] \
+         && perl "$t/meshcheck.pl" "$name" && perl "$t/meshcmp.pl" "$ref" "$name" 1e-4; then
+         ok "rcoal: -e $e reproduces $name"
+      else
+         bad "rcoal: -e $e should reproduce $name (see $d)"
+      fi
    else
-      bad "rcoal: -e $e should reproduce $name (see $d)"
+      out=$(printf '%s_%05d' "${name%_*}" "$n")
+      if "$bin/rcoal" -f test.c3p -e "$e" > "$name.out" 2>&1 && [ -f "$out" ] \
+         && perl "$t/meshcheck.pl" "$out"; then
+         ok "rcoal: -e $e gives a closed $out (the author's $name is not closed)"
+      else
+         bad "rcoal: -e $e should give a closed $out (see $d)"
+      fi
    fi
 done
 
