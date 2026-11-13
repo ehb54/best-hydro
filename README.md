@@ -53,8 +53,13 @@ thousands. Its run time grows as N³.
 ## Running
 
 The input is a triangulated molecular surface. Connolly's MSROLL is not included: it
-is a commercial program. rcoal 3.0 also reads triangulations from Sanner's MSMS. The
-manual in `doc/` describes each step and its options; in short:
+is a commercial program. rcoal 3.0 also reads triangulations from Sanner's MSMS.
+[sesmesh](https://github.com/ehb54/sesmesh), a free (MIT) mesher, writes both formats
+from the same spheres and probe radius. rcoal coarsens its meshes into closed ones. For
+lysozyme, with rcoal starting from meshes of the same size (30,000 triangles), BEST gives
+the same D and [η] from sesmesh's meshes as from MSROLL's, within 0.03%; the sesmesh
+README has the comparisons. The manual in `doc/` describes each step and its options; in
+short:
 
 ```bash
 msroll -m protein.pdb -p 1.5 -r radii -t protein.c3p -v protein.c3v -f 0.7
