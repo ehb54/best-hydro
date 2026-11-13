@@ -99,6 +99,9 @@ Work since `v4.0-aragon`:
   ([#3](https://github.com/ehb54/best-hydro/pull/3)); its rcoal tests expect closed meshes
   where two of the author's examples are not closed
   ([#8](https://github.com/ehb54/best-hydro/pull/8)).
+- BEST: about 20 to 30 times faster with `-vc`, which no longer inverts the matrix, and the
+  matrix is filled with OpenMP threads; the printed results are the same
+  ([#9](https://github.com/ehb54/best-hydro/pull/9)).
 
 ## References
 
