@@ -92,6 +92,11 @@ for proteins, and Martin Perez to the one for DNA. Stuart Allison gave the initi
 translation-rotation coupling error fixed in version 4.0. The work was supported by the
 NIH MBRS SCORE program.
 
+E. H. Brookes (Department of Chemistry and Biochemistry, University of Montana) maintains
+this repository for US-SOMO. The work since `v4.0-aragon` is supported by NIH grant
+R01 GM120600.
+
 ## License
 
-Released by the author under the MIT License; see `LICENSE`.
+Released by the author under the MIT License. The changes since `v4.0-aragon` are under
+the same license. See `LICENSE`.
