@@ -15,8 +15,9 @@ Boundary-element hydrodynamics for rigid macromolecules, by Sergio R. Aragon
   triangulations over a chosen range of triangle counts, so that BEST's results can be
   extrapolated linearly in 1/N to an infinite number of triangles.
 
-The sources here are as the author sent them. Fixes and improvements come as pull
-requests.
+The tag [`v4.0-aragon`](https://github.com/ehb54/best-hydro/tree/v4.0-aragon) holds the
+programs as the author released them. The main branch carries the fixes and improvements
+made since; see [Versions](#versions).
 
 ## Contents
 
@@ -41,7 +42,8 @@ make LAPACK="-lopenblas"              # or another LAPACK/BLAS
 make LAPACK="-framework Accelerate"   # macOS
 ```
 
-This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. The author compiled with PGI and
+This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. `make test` (with the same
+`LAPACK=...`) runs the examples and checks the results; it needs Perl. The author compiled with PGI and
 `-r8`, so that every REAL is 8 bytes; the Makefile uses gfortran's equivalent,
 `-fdefault-real-8 -fdefault-double-8`. He recommends optimization no higher than `-O2`.
 
@@ -79,6 +81,25 @@ their output next to their input:
   example `rcoal -f test.c3p -e 0.8` reproduces `test_05770`.
 - `examples/rcoal3`: `rcoal3 -f 1crn.face -nmax 2500 -nmin 1500 -n 3 -s`.
 
+## Versions
+
+- **`v4.0-aragon`**: BEST 4.0, rcoal 2.0 and rcoal 3.0 as Sergio Aragon released them in
+  2025. The Fortran sources are exactly as he sent them; only this README, the license and
+  the Makefile were added.
+- **`main`**: work since `v4.0-aragon`. Each change comes as a pull request. Releases will be
+  tagged `v4.1`, `v4.2` and so on, and listed here.
+
+Work since `v4.0-aragon`:
+
+- rcoal: crash and memory fixes
+  ([#1](https://github.com/ehb54/best-hydro/pull/1)); coarsened meshes kept closed and
+  manifold, and triangulations that would give NaN in BEST refused with an error
+  ([#2](https://github.com/ehb54/best-hydro/pull/2)).
+- `make test` and continuous integration on GitHub
+  ([#3](https://github.com/ehb54/best-hydro/pull/3)); its rcoal tests expect closed meshes
+  where two of the author's examples are not closed
+  ([#8](https://github.com/ehb54/best-hydro/pull/8)).
+
 ## References
 
 - S. R. Aragon, "A precise boundary element method for macromolecular transport
@@ -97,6 +118,11 @@ for proteins, and Martin Perez to the one for DNA. Stuart Allison gave the initi
 translation-rotation coupling error fixed in version 4.0. The work was supported by the
 NIH MBRS SCORE program.
 
+E. H. Brookes (Department of Chemistry and Biochemistry, University of Montana) maintains
+this repository for US-SOMO. The work since `v4.0-aragon` is supported by NIH grant
+R01 GM120600.
+
 ## License
 
-Released by the author under the MIT License; see `LICENSE`.
+Released by the author under the MIT License. The changes since `v4.0-aragon` are under
+the same license. See `LICENSE`.

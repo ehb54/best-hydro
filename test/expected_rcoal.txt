@@ -1,0 +1,11 @@
+# rcoal example meshes (examples/rcoal) that rcoal no longer reproduces, and the
+# triangle count it gives instead at the same edge fraction.
+#
+# The author's test_03402 has 3 duplicate triangles and 3 edges shared by more
+# than two triangles; test_04352 has 1 of each.  rcoal now skips the collapses
+# that would make them (4 and 1), so it writes a closed mesh with a few more
+# triangles.  run_tests.sh checks that mesh is closed.
+#
+# author's mesh  triangles now
+test_03402       3406
+test_04352       4354

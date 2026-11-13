@@ -1,0 +1,80 @@
+#!/bin/bash
+# Runs BEST, rcoal and rcoal3 on the examples and checks the results.
+#
+#   test/run_tests.sh [bin-directory]     (default: bin; "make test" runs this)
+#
+# Work files go in a new directory under $TEST_WORKDIR, or the system's
+# temporary directory if that is not set, and are kept if a test fails.
+# Needs Perl.
+
+set -u
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$(cd "${1:-$root/bin}" && pwd) || exit 1
+t=$root/test
+work=$(mktemp -d "${TEST_WORKDIR:-${TMPDIR:-/tmp}}/best-hydro-test.XXXXXX") || exit 1
+fails=0
+ok()  { echo "ok   - $*"; }
+bad() { echo "FAIL - $*"; fails=$((fails+1)); }
+
+# BEST: the author's sample input
+d=$work/best; mkdir -p "$d"; cd "$d" || exit 1
+cp "$root/examples/best/2eu7_02562" .
+if "$bin/best" -f 2eu7_02562 -v -mw 30000 > best.out 2>&1 \
+   && perl "$t/check_best.pl" 2eu7_02562vm.be "$t/expected_best_2eu7.txt"; then
+   ok "best: 2eu7_02562 -v -mw 30000"
+else
+   bad "best: 2eu7_02562 -v -mw 30000 (see $d)"
+fi
+
+# rcoal: the author's test case.  Each mesh is regenerated from the edge
+# fraction recorded in its .his file, and must be closed.  It must also
+# reproduce the author's mesh, unless test/expected_rcoal.txt gives another
+# triangle count for it: there the author's mesh is not closed, and rcoal now
+# skips the collapses that made it so.
+d=$work/rcoal; mkdir -p "$d"; cd "$d" || exit 1
+cp "$root/examples/rcoal/test.c3p" "$root/examples/rcoal/test.c3v" .
+for his in "$root"/examples/rcoal/test_*.his; do
+   ref=${his%.his}
+   name=$(basename "$ref")
+   e=$(awk '/Edge fraction/ { print $NF; exit }' "$his")
+   n=$(awk -v m="$name" '$1 == m { print $2; exit }' "$t/expected_rcoal.txt")
+   if [ -z "$n" ]; then
+      if "$bin/rcoal" -f test.c3p -e "$e" > "$name.out" 2>&1 && [ -f "$name" ] \
+         && perl "$t/meshcheck.pl" "$name" && perl "$t/meshcmp.pl" "$ref" "$name" 1e-4; then
+         ok "rcoal: -e $e reproduces $name"
+      else
+         bad "rcoal: -e $e should reproduce $name (see $d)"
+      fi
+   else
+      out=$(printf '%s_%05d' "${name%_*}" "$n")
+      if "$bin/rcoal" -f test.c3p -e "$e" > "$name.out" 2>&1 && [ -f "$out" ] \
+         && perl "$t/meshcheck.pl" "$out"; then
+         ok "rcoal: -e $e gives a closed $out (the author's $name is not closed)"
+      else
+         bad "rcoal: -e $e should give a closed $out (see $d)"
+      fi
+   fi
+done
+
+# rcoal3: crambin, triangulated by MSMS
+d=$work/rcoal3; mkdir -p "$d"; cd "$d" || exit 1
+cp "$root"/examples/rcoal3/1crn.* .
+if "$bin/rcoal3" -f 1crn.face -nmax 2500 -nmin 1500 -n 3 -s > rcoal3.out 2>&1; then
+   meshes=$(ls 1crn_[0-9][0-9][0-9][0-9][0-9] 2>/dev/null)
+   n=$(echo $meshes | wc -w)
+   if [ "$n" -eq 3 ] && perl "$t/meshcheck.pl" $meshes; then
+      ok "rcoal3: 1crn.face -s gives 3 closed meshes"
+   else
+      bad "rcoal3: 1crn.face -s should give 3 closed meshes, got $n (see $d)"
+   fi
+else
+   bad "rcoal3: 1crn.face -s failed (see $d)"
+fi
+
+if [ $fails -eq 0 ]; then
+   rm -rf "$work"
+   echo "all tests passed"
+else
+   echo "$fails test(s) failed; files kept in $work"
+   exit 1
+fi

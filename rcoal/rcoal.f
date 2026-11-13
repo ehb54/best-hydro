@@ -36,6 +36,12 @@ c Note that values of any other parameters are ignored if the -e option is used.
 c Aragon 10/15/07
 
 	dimension nt(10),nn(10),e(10)
+c     Set by Coalesce: the number of triangles of zero area in its last
+c     triangulation, and the files written so far (two for each).
+      common /zarea/ nzero
+      common /outlst/ nout
+      character*80 outf
+      common /outnam/ outf(20)
 	CHARACTER*80 con3
 
         nmax = -1
@@ -44,6 +50,8 @@ c Aragon 10/15/07
 	edgefrac = -1.0
 
 	print*,"Rcoal Ver. 2.0"
+      nzero = 0
+      nout = 0
 	print*, "SFSU, Aragon Lab."
 
 C READ INPUT FROM COMMAND LINE
@@ -105,6 +113,7 @@ c Generate list of edgfrac values from formula & call scoalesce.
 	e(j) = 1.000*((float(ntriang)/float(nt(j)) -1.0)/a)**(1/p)
 	print *, ' e = ',e(j)
 	call scoalesce(con3,e(j),nn(j),1)
+      if(nzero.gt.0) goto 230
 	print *, 'Target n         ',nt(j)
         print *, 'Actual coalesce n',nn(j)
         print *, ' '
@@ -112,9 +121,32 @@ c Generate list of edgfrac values from formula & call scoalesce.
 	goto 220
 110	continue
 	call scoalesce(con3,edgefrac,n3,1)
+      if(nzero.gt.0) goto 230
         print *, 'Actual coalesce n',n3
 	
-220	stop
+c     List the files written, as Coalesce did after each triangulation.
+220   do i=1,nout-1,2
+      print *,' '
+      print *,' Output files written:'
+      print *,'                      ',outf(i)
+      print *,'                      ',outf(i+1)
+      print *,' '
+      end do
+      stop
+c     A triangulation has a triangle with two vertices at the same
+c     position (msroll can give them where its surface folds onto
+c     itself), which BEST cannot use.  Remove the files already
+c     written and fail, so that the caller can try another input.
+230   do i=1,nout
+      open(16,file=outf(i),status='old',iostat=ierr)
+      if(ierr.eq.0) close(16,status='delete')
+      end do
+      write(0,*) 'rcoal: a triangulation has triangles of zero area'
+      write(0,*) '(two vertices at the same position), which BEST'
+      write(0,*) 'cannot use.  No triangulation written;'
+      write(0,*) 'try a coarser input triangulation.'
+      flush(0)
+      stop 1
 	end program
 
        SUBROUTINE INPUT(CON3,NMAX,NMIN,N,WM,edgefrac)
