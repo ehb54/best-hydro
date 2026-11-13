@@ -102,6 +102,9 @@ C      9/13/04 D. HAHN & S. Aragon: MODULAR, F90 VERSION CREATED (VERSION 3.90) 
 C      VISCO, & OUTPUT); Flags appended to name of output file.
 C	4/14/2025 Corrected difco.f so Dtr and Ktr matrices are symmetric.  Error noticed by Jerome
 C	Fung in 2020.  This is new verson 4.0 distribution.
+C	11/13/2026 E. H. Brookes: The -vc calculation no longer inverts GR.  DIFCO and VISCO
+C	solve for all their flows at once with the LU factors of GR (DGETRS).  This is much
+C	faster, and removes the rounding error of the explicit inverse from the -vc results.
 	
 
 c      ARRAY DIMENSIONS
@@ -118,8 +121,9 @@ c      results.  The area correction should be used for such precise work (that 
 c      the Connolly precise surface area.)
 
        INTEGER,DIMENSION(:),ALLOCATABLE :: IPIV
-       REAL,DIMENSION(:),ALLOCATABLE :: AREA, B, V0, WORK 
-       REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X, GR
+       REAL,DIMENSION(:),ALLOCATABLE :: AREA
+       REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X, GR,
+     $ B, V0
        REAL,DIMENSION(:,:,:),ALLOCATABLE :: G
        REAL,DIMENSION(:,:,:,:),ALLOCATABLE :: H
        DIMENSION FTOTH(3),TTOTH(3),OMGA(3),D(3),V(3,3),U(3),DTR(3,3),
@@ -155,9 +159,8 @@ c      read number of surface patches
        NAR3 = 3*NAR
                                                                 
        ALLOCATE(V1(NAR,3),V2(NAR,3),V3(NAR,3),X(NAR,3),
-     $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3),F(NAR,3),B(NAR3),
-     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3),
-     $ WORK(NAR3))
+     $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3,8),F(NAR,3),B(NAR3,6),
+     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3))
                                                                                 
 c      read input file:
 c      We read-in only the triangle vertices and the number of triangles, NAR.
@@ -320,7 +323,7 @@ c      Test the variable info and abort if there is a problem.
 C      IV. CALCULATE THE DIFFUSION TENSORS
 
        CALL DIFCO(OUTFNM2,NAR,X,GR,AREA,
-     $ ICOV,INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV,WORK)
+     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV)
 
 C      V. CALCULATE THE VISCOSITY FACTOR IF REQUESTED
 

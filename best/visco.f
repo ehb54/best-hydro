@@ -5,11 +5,9 @@ C      THIS SUBROUTINE CALCULATES THE VISCOSITY FACTOR (S. ALLISON,
 C      MACROMOLECULES 1998,31,4464-4474.) AT EITHER THE VISCOSITY CENTER
 C      OR THE CENTROID 
 
-       DIMENSION BB(3,3),BBI(3,3),TEMP01(5),TEMP02(5),TEMP03(5),
-     $ TEMP11(5),TEMP12(5),TEMP13(5),TEMP21(5),TEMP22(5),TEMP23(5),
-     $ TEMP31(5),TEMP32(5),TEMP33(5),GR(3*NAR,3*NAR),AREA(NAR),
+       DIMENSION BB(3,3),BBI(3,3),GR(3*NAR,3*NAR),AREA(NAR),
      $ G(NAR,5,3),H(NAR,5,3,3),IPIV(3*NAR),X(NAR,3),W(5,3*NAR),
-     $ V0(3*NAR) 
+     $ V0(3*NAR,8) 
        CHARACTER*80 OUTFNM2
        
        PI = 3.1415926535897932385
@@ -18,120 +16,55 @@ C      OR THE CENTROID
 C      DETERMINE THE VISCOSITY CENTER, IF REQUESTED
        IF(ICOV.EQ.0) GOTO 600
 
+C      G AND H HOLD THE PRODUCTS OF THE INVERSE OF GR WITH THE VELOCITIES OF
+C      THE FIVE PURE STRAIN FLOWS (TIMES 2) AND OF THE THREE UNIT TRANSLATIONS,
+C      AT THE CENTROID.  INSTEAD OF INVERTING GR, SOLVE FOR ALL EIGHT FLOWS AT
+C      ONCE WITH THE LU FACTORS OF GR: V0(:,1-5) THE STRAIN FLOWS, V0(:,6-8)
+C      THE TRANSLATIONS ALONG X,Y,Z.
+
+       CALL STRAIN(NAR,X,V0)
+       DO N = 1,NAR
+       I0 = 3*(N-1)
+       DO K = 1,3
+       V0(I0+K,6) = 0.0
+       V0(I0+K,7) = 0.0
+       V0(I0+K,8) = 0.0
+       ENDDO
+       V0(I0+1,6) = 1.0
+       V0(I0+2,7) = 1.0
+       V0(I0+3,8) = 1.0
+       ENDDO
+       CALL DGETRS('N',NAR3,8,GR,NAR3,IPIV,V0,NAR3,INFO)
+
+C      G(N,L,K): COMPONENT K AT TRIANGLE N FOR STRAIN FLOW L.
+C      H(N,L,K,M): THE CHANGE IN G(N,L,K) PER UNIT SHIFT OF ALL COORDINATES
+C      X(:,M); THE DERIVATIVE OF FLOW L'S VELOCITY WITH RESPECT TO X(:,M) IS
+C      PLUS OR MINUS A UNIT TRANSLATION, OR ZERO.
+
        DO N1 = 1,NAR
        I0 = 3*(N1-1)
- 
+       DO K = 1,3
        DO L = 1,5
-       TEMP01(L) = 0.0
-       TEMP02(L) = 0.0
-       TEMP03(L) = 0.0
-       TEMP11(L) = 0.0
-       TEMP12(L) = 0.0
-       TEMP13(L) = 0.0
-       TEMP21(L) = 0.0
-       TEMP22(L) = 0.0
-       TEMP23(L) = 0.0
-       TEMP31(L) = 0.0
-       TEMP32(L) = 0.0
-       TEMP33(L) = 0.0
+       G(N1,L,K) = 2.0*V0(I0+K,L)
        ENDDO
- 
-       DO N2 = 1,NAR
-       J0 = 3*(N2-1)
-       GRE11 = GR(I0+1,J0+2)
-       GRE12 = GR(I0+1,J0+1)
-       GRE21 = GR(I0+2,J0+2)
-       GRE22 = GR(I0+2,J0+1)
-       GRE31 = GR(I0+3,J0+2)
-       GRE32 = GR(I0+3,J0+1)
-       TEMP01(1) = TEMP01(1) + GRE11*X(N2,1) + GRE12*X(N2,2)
-       TEMP02(1) = TEMP02(1) + GRE21*X(N2,1) + GRE22*X(N2,2)
-       TEMP03(1) = TEMP03(1) + GRE31*X(N2,1) + GRE32*X(N2,2)
-       TEMP11(1) = TEMP11(1) + GRE11
-       TEMP12(1) = TEMP12(1) + GRE12
-       TEMP21(1) = TEMP21(1) + GRE21
-       TEMP22(1) = TEMP22(1) + GRE22
-       TEMP31(1) = TEMP31(1) + GRE31
-       TEMP32(1) = TEMP32(1) + GRE32
- 
-       GRE11 = GR(I0+1,J0+3)
-       GRE13 = GR(I0+1,J0+1)
-       GRE21 = GR(I0+2,J0+3)
-       GRE23 = GR(I0+2,J0+1)
-       GRE31 = GR(I0+3,J0+3)
-       GRE33 = GR(I0+3,J0+1)
-       TEMP01(2) = TEMP01(2) + GRE11*X(N2,1) + GRE13*X(N2,3)
-       TEMP02(2) = TEMP02(2) + GRE21*X(N2,1) + GRE23*X(N2,3)
-       TEMP03(2) = TEMP03(2) + GRE31*X(N2,1) + GRE33*X(N2,3)
-       TEMP11(2) = TEMP11(2) + GRE11
-       TEMP13(2) = TEMP13(2) + GRE13
-       TEMP21(2) = TEMP21(2) + GRE21
-       TEMP23(2) = TEMP23(2) + GRE23
-       TEMP31(2) = TEMP31(2) + GRE31
-       TEMP33(2) = TEMP33(2) + GRE33
- 
-       GRE12 = GR(I0+1,J0+3)
-       GRE13 = GR(I0+1,J0+2)
-       GRE22 = GR(I0+2,J0+3)
-       GRE23 = GR(I0+2,J0+2)
-       GRE32 = GR(I0+3,J0+3)
-       GRE33 = GR(I0+3,J0+2)
-       TEMP01(3) = TEMP01(3) + GRE12*X(N2,2) + GRE13*X(N2,3)
-       TEMP02(3) = TEMP02(3) + GRE22*X(N2,2) + GRE23*X(N2,3)
-       TEMP03(3) = TEMP03(3) + GRE32*X(N2,2) + GRE33*X(N2,3)
-       TEMP12(3) = TEMP12(3) + GRE12
-       TEMP13(3) = TEMP13(3) + GRE13
-       TEMP22(3) = TEMP22(3) + GRE22
-       TEMP23(3) = TEMP23(3) + GRE23
-       TEMP32(3) = TEMP32(3) + GRE32
-       TEMP33(3) = TEMP33(3) + GRE33
- 
-       GRE11 = GR(I0+1,J0+1)
-       GRE12 = -GR(I0+1,J0+2)
-       GRE21 = GR(I0+2,J0+1)
-       GRE22 = -GR(I0+2,J0+2)
-       GRE31 = GR(I0+3,J0+1)
-       GRE32 = -GR(I0+3,J0+2)
-       TEMP01(4) = TEMP01(4) + GRE11*X(N2,1) + GRE12*X(N2,2)
-       TEMP02(4) = TEMP02(4) + GRE21*X(N2,1) + GRE22*X(N2,2)
-       TEMP03(4) = TEMP03(4) + GRE31*X(N2,1) + GRE32*X(N2,2)
-       TEMP11(4) = TEMP11(4) + GRE11
-       TEMP12(4) = TEMP12(4) + GRE12
-       TEMP21(4) = TEMP21(4) + GRE21
-       TEMP22(4) = TEMP22(4) + GRE22
-       TEMP31(4) = TEMP31(4) + GRE31
-       TEMP32(4) = TEMP32(4) + GRE32
- 
-       GRE11 = GR(I0+1,J0+1)
-       GRE13 = -GR(I0+1,J0+3)
-       GRE21 = GR(I0+2,J0+1)
-       GRE23 = -GR(I0+2,J0+3)
-       GRE31 = GR(I0+3,J0+1)
-       GRE33 = -GR(I0+3,J0+3)
-       TEMP01(5) = TEMP01(5) + GRE11*X(N2,1) + GRE13*X(N2,3)
-       TEMP02(5) = TEMP02(5) + GRE21*X(N2,1) + GRE23*X(N2,3)
-       TEMP03(5) = TEMP03(5) + GRE31*X(N2,1) + GRE33*X(N2,3)
-       TEMP11(5) = TEMP11(5) + GRE11
-       TEMP13(5) = TEMP13(5) + GRE13
-       TEMP21(5) = TEMP21(5) + GRE21
-       TEMP23(5) = TEMP23(5) + GRE23
-       TEMP31(5) = TEMP31(5) + GRE31
-       TEMP33(5) = TEMP33(5) + GRE33
-       ENDDO                     
- 
-       DO L = 1,5
-       G(N1,L,1) = TEMP01(L)
-       G(N1,L,2) = TEMP02(L)
-       G(N1,L,3) = TEMP03(L)
-       H(N1,L,1,1) = TEMP11(L)
-       H(N1,L,1,2) = TEMP12(L)
-       H(N1,L,1,3) = TEMP13(L)
-       H(N1,L,2,1) = TEMP21(L)
-       H(N1,L,2,2) = TEMP22(L)
-       H(N1,L,2,3) = TEMP23(L)
-       H(N1,L,3,1) = TEMP31(L)
-       H(N1,L,3,2) = TEMP32(L)
-       H(N1,L,3,3) = TEMP33(L)
+       E1 = V0(I0+K,6)
+       E2 = V0(I0+K,7)
+       E3 = V0(I0+K,8)
+       H(N1,1,K,1) = E2
+       H(N1,1,K,2) = E1
+       H(N1,1,K,3) = 0.0
+       H(N1,2,K,1) = E3
+       H(N1,2,K,2) = 0.0
+       H(N1,2,K,3) = E1
+       H(N1,3,K,1) = 0.0
+       H(N1,3,K,2) = E3
+       H(N1,3,K,3) = E2
+       H(N1,4,K,1) = E1
+       H(N1,4,K,2) = -E2
+       H(N1,4,K,3) = 0.0
+       H(N1,5,K,1) = E1
+       H(N1,5,K,2) = 0.0
+       H(N1,5,K,3) = -E3
        ENDDO
        ENDDO
  
@@ -223,115 +156,20 @@ C      REFER INCENTER COORDINATES TO THE CENTER OF VISCOSITY
        X(N,3) = X(N,3) - D3
        ENDDO
 
-600    IF(ICOV.EQ.1) THEN
+C      COMPUTE THE STRESS FORCE AT THE CENTER OF VISCOSITY (X WAS SHIFTED THERE
+C      ABOVE) OR AT THE CENTROID.  SOLVE FOR THE FIVE PURE STRAIN FLOWS AT ONCE
+C      WITH THE LU FACTORS OF GR.
 
-C      COMPUTE THE STRESS FORCE AT THE CENTER OF VISCOSITY
-
-       DO N1 = 1,NAR
-       I0 = 3*(N1-1)
-       TEMPA = 0.0
-       TEMPB = 0.0
-       TEMPC = 0.0
-       TEMPD = 0.0
-       TEMPE = 0.0
-       TEMPF = 0.0
-       TEMPG = 0.0
-       TEMPH = 0.0
-       TEMPI = 0.0
-       TEMPJ = 0.0
-       TEMPK = 0.0
-       TEMPL = 0.0
-       TEMPM = 0.0
-       TEMPN = 0.0
-       TEMPO = 0.0
-       DO N2 = 1,NAR
-       J0 = 3*(N2-1)
-       TEMPA = TEMPA + (X(N2,2)*GR(I0+1,J0+1) + X(N2,1)*GR(I0+1,J0+2))
-       TEMPB = TEMPB + (X(N2,2)*GR(I0+2,J0+1) + X(N2,1)*GR(I0+2,J0+2))
-       TEMPC = TEMPC + (X(N2,2)*GR(I0+3,J0+1) + X(N2,1)*GR(I0+3,J0+2))
-       TEMPD = TEMPD + (X(N2,3)*GR(I0+1,J0+1) + X(N2,1)*GR(I0+1,J0+3))
-       TEMPE = TEMPE + (X(N2,3)*GR(I0+2,J0+1) + X(N2,1)*GR(I0+2,J0+3))
-       TEMPF = TEMPF + (X(N2,3)*GR(I0+3,J0+1) + X(N2,1)*GR(I0+3,J0+3))
-       TEMPG = TEMPG + (X(N2,3)*GR(I0+1,J0+2) + X(N2,2)*GR(I0+1,J0+3))
-       TEMPH = TEMPH + (X(N2,3)*GR(I0+2,J0+2) + X(N2,2)*GR(I0+2,J0+3))
-       TEMPI = TEMPI + (X(N2,3)*GR(I0+3,J0+2) + X(N2,2)*GR(I0+3,J0+3))
-       TEMPJ = TEMPJ + (X(N2,1)*GR(I0+1,J0+1) - X(N2,2)*GR(I0+1,J0+2))
-       TEMPK = TEMPK + (X(N2,1)*GR(I0+2,J0+1) - X(N2,2)*GR(I0+2,J0+2))
-       TEMPL = TEMPL + (X(N2,1)*GR(I0+3,J0+1) - X(N2,2)*GR(I0+3,J0+2))
-       TEMPM = TEMPM + (X(N2,1)*GR(I0+1,J0+1) - X(N2,3)*GR(I0+1,J0+3))
-       TEMPN = TEMPN + (X(N2,1)*GR(I0+2,J0+1) - X(N2,3)*GR(I0+2,J0+3))
-       TEMPO = TEMPO + (X(N2,1)*GR(I0+3,J0+1) - X(N2,3)*GR(I0+3,J0+3))
-       ENDDO
-       W(1,I0+1) = 0.5*TEMPA
-       W(1,I0+2) = 0.5*TEMPB
-       W(1,I0+3) = 0.5*TEMPC
-       W(2,I0+1) = 0.5*TEMPD
-       W(2,I0+2) = 0.5*TEMPE
-       W(2,I0+3) = 0.5*TEMPF
-       W(3,I0+1) = 0.5*TEMPG
-       W(3,I0+2) = 0.5*TEMPH
-       W(3,I0+3) = 0.5*TEMPI
-       W(4,I0+1) = 0.5*TEMPJ
-       W(4,I0+2) = 0.5*TEMPK
-       W(4,I0+3) = 0.5*TEMPL
-       W(5,I0+1) = 0.5*TEMPM
-       W(5,I0+2) = 0.5*TEMPN
-       W(5,I0+3) = 0.5*TEMPO
-       ENDDO
-       ELSE
-
-C      COMPUTE THE STRESS FORCE AT THE CENTROID
-
+600    CALL STRAIN(NAR,X,V0)
+       CALL DGETRS('N',NAR3,5,GR,NAR3,IPIV,V0,NAR3,INFO)
        DO L = 1,5
-       IF(L.EQ.1) THEN
        DO N = 1,NAR
        I0=3*(N-1)
-       V0(I0+1) = 0.5*X(N,2)
-       V0(I0+2) = 0.5*X(N,1)
-       V0(I0+3) = 0.0
-       ENDDO 
-       ENDIF
-       IF(L.EQ.2) THEN
-       DO N = 1,NAR
-       I0=3*(N-1)
-       V0(I0+1) = 0.5*X(N,3)
-       V0(I0+2) = 0.0
-       V0(I0+3) = 0.5*X(N,1)
-       ENDDO
-       ENDIF
-       IF(L.EQ.3) THEN
-       DO N = 1,NAR
-       I0=3*(N-1)
-       V0(I0+1) = 0.0
-       V0(I0+2) = 0.5*X(N,3)
-       V0(I0+3) = 0.5*X(N,2)
-       ENDDO
-       ENDIF
-       IF(L.EQ.4) THEN
-       DO N = 1,NAR
-       I0=3*(N-1)
-       V0(I0+1) = 0.5*X(N,1)
-       V0(I0+2) =-0.5*X(N,2)
-       V0(I0+3) = 0.0
-       ENDDO
-       ENDIF
-       IF(L.EQ.5) THEN
-       DO N = 1,NAR
-       I0=3*(N-1)
-       V0(I0+1) = 0.5*X(N,1)
-       V0(I0+2) = 0.0
-       V0(I0+3) =-0.5*X(N,3)
-       ENDDO
-       ENDIF
-       CALL DGETRS('N',NAR3,1,GR,NAR3,IPIV,V0,NAR3,INFO)
-       DO N = 1,NAR
-       I0=3*(N-1)
-       W(L,I0+1) = V0(I0+1)
-       W(L,I0+2) = V0(I0+2)
-       W(L,I0+3) = V0(I0+3)
+       W(L,I0+1) = V0(I0+1,L)
+       W(L,I0+2) = V0(I0+2,L)
+       W(L,I0+3) = V0(I0+3,L)
        ENDDO
        ENDDO
-       ENDIF
 
 C      COMPUTE THE VISCOSITY FACTOR
 
@@ -365,6 +203,35 @@ C      COMPUTE THE VISCOSITY FACTOR
 
 C      MULTIPLY BY 0.75 FOR PREAVERAGED CALCULATION
        IF(CG.EQ.0) CHIPRIME = 0.75*CHIPRIME
+
+       RETURN
+       END
+
+       SUBROUTINE STRAIN(NAR,X,V0)
+
+C      VELOCITIES OF THE FIVE PURE STRAIN FLOWS AT THE INCENTERS X, IN
+C      V0(:,L), L = 1,...,5 (S. ALLISON, MACROMOLECULES 1998,31,4464-4474.)
+
+       DIMENSION X(NAR,3),V0(3*NAR,5)
+
+       DO N = 1,NAR
+       I0=3*(N-1)
+       V0(I0+1,1) = 0.5*X(N,2)
+       V0(I0+2,1) = 0.5*X(N,1)
+       V0(I0+3,1) = 0.0
+       V0(I0+1,2) = 0.5*X(N,3)
+       V0(I0+2,2) = 0.0
+       V0(I0+3,2) = 0.5*X(N,1)
+       V0(I0+1,3) = 0.0
+       V0(I0+2,3) = 0.5*X(N,3)
+       V0(I0+3,3) = 0.5*X(N,2)
+       V0(I0+1,4) = 0.5*X(N,1)
+       V0(I0+2,4) =-0.5*X(N,2)
+       V0(I0+3,4) = 0.0
+       V0(I0+1,5) = 0.5*X(N,1)
+       V0(I0+2,5) = 0.0
+       V0(I0+3,5) =-0.5*X(N,3)
+       ENDDO
 
        RETURN
        END
