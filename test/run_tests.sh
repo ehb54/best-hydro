@@ -26,6 +26,14 @@ else
    bad "best: 2eu7_02562 -v -mw 30000 (see $d)"
 fi
 
+# BEST: the viscosity at the center of viscosity (-vc)
+if "$bin/best" -f 2eu7_02562 -vc -mw 30000 > best_vc.out 2>&1 \
+   && perl "$t/check_best.pl" 2eu7_02562vcm.be "$t/expected_best_2eu7_vc.txt"; then
+   ok "best: 2eu7_02562 -vc -mw 30000"
+else
+   bad "best: 2eu7_02562 -vc -mw 30000 (see $d)"
+fi
+
 # BEST: the same mesh, rotated, must give the same results
 perl "$t/permute_mesh.pl" 2eu7_02562 2eu7_rot
 if "$bin/best" -f 2eu7_rot -v -mw 30000 > best_rot.out 2>&1 \
