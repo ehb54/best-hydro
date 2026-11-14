@@ -8,16 +8,22 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # BEST with the H-matrix solver (the default), and without it.
+        hmatrix: ["1", ""]
+    name: linux${{ matrix.hmatrix == '' && ' (HMATRIX=)' || '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install gfortran and OpenBLAS
         run: |
           sudo apt-get update
-          sudo apt-get install -y gfortran libopenblas-dev
+          sudo apt-get install -y gfortran g++ libopenblas-dev
 
       - name: Build
-        run: make LAPACK="-lopenblas"
+        run: make LAPACK="-lopenblas" HMATRIX="${{ matrix.hmatrix }}"
 
       - name: Test
-        run: make test LAPACK="-lopenblas"
+        run: make test LAPACK="-lopenblas" HMATRIX="${{ matrix.hmatrix }}"

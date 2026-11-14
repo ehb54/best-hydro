@@ -53,6 +53,35 @@ else
    bad "best: 2eu7_02562 -na -v -mw 30000 (see $d)"
 fi
 
+# BEST with the H-matrix solver (-hm), forced on this small mesh.  With
+# BEST_HMATRIX_CHECK set, BEST also fills GR densely and logs whether the
+# solver's entries are TGETGR's bit for bit.  The results must agree with the
+# dense ones above to 2e-5 (or the last digit printed): GMRES with -v, and the
+# direct H-LU with -vc.
+d=$work/best-hm; mkdir -p "$d"; cd "$d" || exit 1
+cp "$root/examples/best/2eu7_02562" .
+BEST_HMATRIX_CHECK=1 "$bin/best" -f 2eu7_02562 -v -mw 30000 -hm > best_hm.out 2>&1
+if grep -q "built without the H-matrix solver" 2eu7_02562vm.log; then
+   echo "skip - best -hm: BEST was built without the H-matrix solver (HMATRIX=)"
+else
+   if grep -q "GR check: 0 of [0-9]* entries and 0 of [0-9]* incenter" 2eu7_02562vm.log; then
+      ok "best -hm: the H-matrix solver's GR entries are TGETGR's, bit for bit"
+   else
+      bad "best -hm: the H-matrix solver's GR entries should be TGETGR's (see $d)"
+   fi
+   if perl "$t/check_best_pair.pl" "$work/best/2eu7_02562vm.be" 2eu7_02562vm.be 2e-5; then
+      ok "best -hm: 2eu7_02562 -v -mw 30000 agrees with the dense solver"
+   else
+      bad "best -hm: 2eu7_02562 -v -mw 30000 should agree with the dense solver (see $d)"
+   fi
+   if "$bin/best" -f 2eu7_02562 -vc -mw 30000 -hm -hlu > best_hlu.out 2>&1 \
+      && perl "$t/check_best_pair.pl" "$work/best/2eu7_02562vcm.be" 2eu7_02562vcm.be 2e-5; then
+      ok "best -hm -hlu: 2eu7_02562 -vc -mw 30000 agrees with the dense solver"
+   else
+      bad "best -hm -hlu: 2eu7_02562 -vc -mw 30000 should agree with the dense solver (see $d)"
+   fi
+fi
+
 # rcoal: the author's test case.  Each mesh is regenerated from the edge
 # fraction recorded in its .his file, and must be closed.  It must also
 # reproduce the author's mesh, unless test/expected_rcoal.txt gives another
