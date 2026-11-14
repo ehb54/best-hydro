@@ -70,8 +70,10 @@ best -f protein_02500 -v -mw 14300
 rcoal writes each triangulation to `<name>_<N>` (with a histogram in `<name>_<N>.his`),
 with the molecule's exact area and volume on the first line. BEST writes
 `<input><flags>.be` and a `.log`. By default BEST rescales the triangle areas to the
-exact surface area. This area correction also regularizes the integral equation, so the
-manual advises against turning it off (`-na`).
+exact surface area, and the manual advises against turning this off (`-na`). The
+rescaling also kept BEST's matrix away from a near-singularity. BEST now removes that
+near-singularity itself, so `-na`, and meshes whose own area is exact (such as sesmesh's),
+give sound results too.
 
 To try the examples, copy them to a scratch directory first, since the programs write
 their output next to their input:
@@ -103,6 +105,12 @@ Work since `v4.0-aragon`:
   factors instead of inverting the matrix, and fills the matrix with OpenMP threads; the
   results are the same to rounding
   ([#9](https://github.com/ehb54/best-hydro/pull/9)).
+- BEST: removes the near-null space of its matrix (a uniform pressure on the surface)
+  before solving. Without the area correction (`-na`, or a mesh whose own area is exact)
+  the torques, the centers, D_r and the viscosity were wrong; on a smooth 7948-triangle
+  lysozyme mesh CHI came out as 1054 instead of 3.24. With the area correction, D_t, CHI
+  and [η] change by 2.3e-6 or less
+  ([#10](https://github.com/ehb54/best-hydro/pull/10)).
 
 ## References
 

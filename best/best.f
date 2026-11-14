@@ -106,6 +106,16 @@ C	11/13/2026 E. H. Brookes: The -vc calculation no longer inverts GR.  DIFCO and
 C	solve for all their flows at once with the LU factors of GR (DGETRS).  This is much
 C	faster, and removes the rounding error of the explicit inverse from the -vc results.
 C	11/13/2026 E. H. Brookes: TGETGR fills GR in parallel when compiled with OpenMP.
+C	11/13/2026 E. H. Brookes: GR is deflated before it is factored.  On a closed surface
+C	the single layer of the normal field vanishes (a uniform pressure makes no flow), so
+C	the unit normals are a near-null vector of GR.  The area correction had been keeping
+C	GR away from singular.  Without it (-na, or a surface whose own area is exact), the
+C	solutions were dominated by that pressure mode, and the torques, the centers, D_r,
+C	the viscosity and even D_t were wrong: CHI 1054 instead of 3.24 for a lysozyme
+C	surface of 7948 triangles, and with -na [eta] 3.21 instead of 2.04 for 2eu7_02562.
+C	GR + GDEF*XMU*XMU^T, with XMU the area times the unit normal of each triangle, has no
+C	such mode.  With the area correction, D_t, CHI and [eta] change by 2.3e-6 or less and
+C	D_r by 1.1e-5 or less.
 	
 
 c      ARRAY DIMENSIONS
@@ -122,7 +132,7 @@ c      results.  The area correction should be used for such precise work (that 
 c      the Connolly precise surface area.)
 
        INTEGER,DIMENSION(:),ALLOCATABLE :: IPIV
-       REAL,DIMENSION(:),ALLOCATABLE :: AREA
+       REAL,DIMENSION(:),ALLOCATABLE :: AREA, XMU
        REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X, GR,
      $ B, V0
        REAL,DIMENSION(:,:,:),ALLOCATABLE :: G
@@ -161,7 +171,8 @@ c      read number of surface patches
                                                                 
        ALLOCATE(V1(NAR,3),V2(NAR,3),V3(NAR,3),X(NAR,3),
      $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3,8),F(NAR,3),B(NAR3,6),
-     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3))
+     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3),
+     $ XMU(NAR3))
                                                                                 
 c      read input file:
 c      We read-in only the triangle vertices and the number of triangles, NAR.
@@ -285,6 +296,56 @@ c      The next call constructs the coefficients of the linear equations to be s
        do j=1,9
        write(12,*)gr(1,j),gr(2,j),gr(3,j),gr(4,j),gr(5,j)
        enddo
+       write(12,*) ' '
+
+c      Deflation of the normal field.  On a closed surface the Stokes single layer of the
+c      normal field vanishes: a uniform pressure makes no flow.  The unit normals are then a
+c      near-null vector of GR (right), and XMU, the area times the unit normal of each
+c      triangle, a left one.  The finer and smoother the surface, the closer GR comes to
+c      singular, and DGETRS returns tractions dominated by that pressure mode.  The area
+c      correction hides this in part: TGETGR scales the diagonal blocks by SQRT(AFAC) and the
+c      others by AFAC, which moves GR's Rayleigh quotient along the normals to a few percent of
+c      its mean diagonal entry, negative, for AFAC of 1.02 to 1.06.  With -na, or a surface
+c      whose own area is exact (AFAC = 1), the quotient is 1e-4 or less of the diagonal.
+c      The rigid-body and strain flows solved below are compatible with the near-null space:
+c      XMU.U vanishes for their surface velocities U (up to the discretization error).  Adding
+c      GDEF*XMU*XMU^T to GR then selects the solution with no net normal traction (XMU.F = 0)
+c      and leaves it otherwise unchanged.  GDEF*|XMU|^2 is the mean diagonal entry of GR, so
+c      the added term is of the size of GR's own entries, far above the area correction's
+c      shift.  With GDEF ten times larger, D_t, CHI and [eta] change by 3e-8 or less and D_r
+c      by 2e-7 or less.
+
+       xmu2 = 0.0
+       diagm = 0.0
+       do n=1,nar
+       v21x = v2(n,1)-v1(n,1)
+       v21y = v2(n,2)-v1(n,2)
+       v21z = v2(n,3)-v1(n,3)
+       v31x = v3(n,1)-v1(n,1)
+       v31y = v3(n,2)-v1(n,2)
+       v31z = v3(n,3)-v1(n,3)
+       xnx = v31y*v21z-v31z*v21y
+       xny = v31z*v21x-v31x*v21z
+       xnz = v31x*v21y-v31y*v21x
+       xnl = DSQRT(xnx**2+xny**2+xnz**2)
+       xmu(3*n-2) = area(n)*xnx/xnl
+       xmu(3*n-1) = area(n)*xny/xnl
+       xmu(3*n) = area(n)*xnz/xnl
+       xmu2 = xmu2+xmu(3*n-2)**2+xmu(3*n-1)**2+xmu(3*n)**2
+       diagm = diagm+gr(3*n-2,3*n-2)+gr(3*n-1,3*n-1)+gr(3*n,3*n)
+       enddo
+       diagm = diagm/nar3
+       gdef = diagm/xmu2
+!$OMP PARALLEL DO PRIVATE(I,GDJ) SCHEDULE(STATIC)
+       DO J=1,NAR3
+       GDJ = GDEF*XMU(J)
+       DO I=1,NAR3
+       GR(I,J) = GR(I,J)+GDJ*XMU(I)
+       ENDDO
+       ENDDO
+!$OMP END PARALLEL DO
+       write(12,*) 'normal-field deflation: mean diagonal of GR = ',diagm
+       write(12,*) ' added GDEF*XMU*XMU^T to GR, GDEF = ',gdef
        write(12,*) ' '
        write(12,*) 'about to enter dgetrf'
        close(12)       
