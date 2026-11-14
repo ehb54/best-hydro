@@ -117,6 +117,12 @@ Both are far below the error of the 1/N extrapolation. `-he 1e-6` changes the GM
 by 6e-7 or less, on meshes of up to 254,292 triangles. At 30,050 triangles it is within
 3e-9 of dense, and it takes about 1.5 times the memory and the time.
 
+A larger eps saves little. With `-he 1e-3` the low-rank blocks shrink by a third, but the
+peak memory only by 16 to 21%: the dense blocks between neighboring triangles and the
+preconditioner stay the same. The results move by 2e-5 to 3e-5, about 50 times as far as at
+1e-4, and all in the same direction, so the 1/N extrapolation does not average the error
+out. To save memory, use `-hs` instead (see Single precision, below).
+
 **Size.** These are lysozyme (1AKI) meshes from sesmesh, run with `-vc -mw 14305` and the
 defaults (GMRES, eps 1e-4). The node is a 2 × EPYC 7713 with 64 threads. "Dense" is the
 72 N² bytes that the dense matrix alone would take.
