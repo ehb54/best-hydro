@@ -370,9 +370,11 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
       const double need = estimate_bytes( n, eps, s.direct, eps_pre, s.single ), avail = double( mem_available() );
       say( "memory: about %.1f GB needed (estimate), %.1f GB available", gb( need ), gb( avail ) );
       if ( avail > 0 && need > avail && env_double( "BEST_HMATRIX_MEMCHECK", 1 ) != 0 ) {
-         say( "error: not enough memory for the H-matrix solver at eps %.0e; a larger -he eps needs less%s "
-              "(set BEST_HMATRIX_MEMCHECK=0 to try anyway)",
-              eps, s.single ? "" : ", and -hs (single precision) about half" );
+         say( "error: not enough memory for the H-matrix solver at eps %.0e; %s (set BEST_HMATRIX_MEMCHECK=0 to try "
+              "anyway)",
+              eps, s.single ? "a larger -he eps needs less, but 1e-3 saves only about 20% over 1e-4, at about 50 "
+                              "times the error"
+                            : "-hs (single precision) needs about half" );
          return 1;
       }
       return s.single ? build_t<float>( s, eps, eps_pre, gdef, xmu ) : build_t<double>( s, eps, eps_pre, gdef, xmu );
