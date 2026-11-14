@@ -290,12 +290,14 @@ C      MULTIPLY BY 4/3 FOR PRE-AVERAGED CALCULATION
        ENDIF
 
 C      Compute Dtr (to be used in Center of Diffusion Transformation)
+C      Dtr = -Kttinv Krt^T Drr.  The sum over k used to keep only its
+C      last term (k=3).
 
        do i=1,3
        do j=1,3
        temp = 0.0
        do k=1,3
-       temp = Kttinv(i,k)*(Krt(1,k)*Drr(1,j)+
+       temp = temp +Kttinv(i,k)*(Krt(1,k)*Drr(1,j)+
      $ Krt(2,k)*Drr(2,j)+Krt(3,k)*Drr(3,j))
        end do
        dtr(i,j) =-temp
