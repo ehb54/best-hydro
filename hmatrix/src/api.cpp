@@ -23,6 +23,10 @@
 #include "mat.h"
 #include "parallel.h"
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 namespace bh {
 
 namespace {
@@ -152,6 +156,13 @@ void say_stats( const char* what, const HMatrix& h, int n, double seconds ) {
         st.kmax, st.kmean );
 }
 
+// glibc keeps the memory freed by the truncations in its heaps; hand what it can back to the system.
+void trim() {
+#ifdef __GLIBC__
+   malloc_trim( 0 );
+#endif
+}
+
 void say_memory() {
    say( "memory: resident %.2f GB, peak %.2f GB, available %.2f GB", gb( double( current_rss() ) ),
         gb( double( peak_rss() ) ), gb( double( mem_available() ) ) );
@@ -176,7 +187,6 @@ int bhm_create( int n, const double* v1, const double* v2, const double* v3, con
       }
       g = std::make_unique<Solver>();
       set_threads( nthreads > 0 ? nthreads : env_threads() );
-      set_blas_threads( 1 );
       g->mesh = mesh_from_best( n, v1, v2, v3, area, afac );
       g->K = std::make_unique<Kernel>( g->mesh, cg );
       say( "H-matrix solver: %d triangles, %d threads", n, threads() );
@@ -255,8 +265,14 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
       s.H->add_rank1( gdef, mt.data(), mt.data() );
       say_stats( "H-matrix", *s.H, n, now() - t );
       say( "H-matrix: eps %.0e, eta %.1f, %.3g kernel blocks per N^2", eps, kEta, double( calls ) / ( double( n ) * n ) );
+      trim();
       say_memory();
 
+      long lrc = 0;
+      double lrs = 0;
+      lowrank_stats( lrc, lrs, true );
+      HMatrix::profile( true );
+      const double cpu0 = cpu_seconds();
       t = now();
       if ( s.direct ) {
          const double piv = s.H->lu( eps );
@@ -270,6 +286,10 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
               "relative residual of %.0e",
               eps_pre, piv, s.restart, s.tol );
       }
+      lowrank_stats( lrc, lrs, true );
+      say( "factorization: %.0f CPU s, %ld truncations taking %.0f CPU s; by site: %s", cpu_seconds() - cpu0, lrc, lrs,
+           HMatrix::profile( true ).c_str() );
+      trim();
       say_memory();
       return 0;
    } );

@@ -1,4 +1,4 @@
-// BEST H-matrix solver: BLAS/LAPACK wrappers, QR/SVD truncation of low-rank products.
+// BEST H-matrix solver: truncation of low-rank products by QR and SVD (dense.h), memory figures.
 // Copyright (c) 2026 E. H. Brookes.  MIT License; see LICENSE.
 #include "mat.h"
 
@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -14,122 +15,7 @@
 
 #include <sys/resource.h>
 
-extern "C" {
-void dgemm_( const char*, const char*, const int*, const int*, const int*, const double*, const double*,
-             const int*, const double*, const int*, const double*, double*, const int*, size_t, size_t );
-void dtrsm_( const char*, const char*, const char*, const char*, const int*, const int*, const double*,
-             const double*, const int*, double*, const int*, size_t, size_t, size_t, size_t );
-void dgeqrf_( const int*, const int*, double*, const int*, double*, double*, const int*, int* );
-void dorgqr_( const int*, const int*, const int*, double*, const int*, const double*, double*, const int*,
-              int* );
-void dgesdd_( const char*, const int*, const int*, double*, const int*, double*, double*, const int*, double*,
-              const int*, double*, const int*, int*, int*, size_t );
-void dgesvd_( const char*, const char*, const int*, const int*, double*, const int*, double*, double*,
-              const int*, double*, const int*, double*, const int*, int*, size_t, size_t );
-void openblas_set_num_threads( int ) __attribute__( ( weak ) );
-}
-
 namespace bh {
-
-void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A, int lda, const double* B,
-           int ldb, double beta, double* C, int ldc ) {
-   if ( m <= 0 || n <= 0 ) {
-      return;
-   }
-   if ( k <= 0 ) {
-      if ( beta != 1.0 ) {
-         for ( int j = 0; j < n; ++j ) {
-            for ( int i = 0; i < m; ++i ) {
-               C[ size_t( j ) * ldc + i ] *= beta;
-            }
-         }
-      }
-      return;
-   }
-   lda = std::max( 1, lda );
-   ldb = std::max( 1, ldb );
-   ldc = std::max( 1, ldc );
-   dgemm_( &ta, &tb, &m, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1 );
-}
-
-void trsm( char side, char uplo, char ta, char diag, int m, int n, double alpha, const double* A, int lda,
-           double* B, int ldb ) {
-   if ( m <= 0 || n <= 0 ) {
-      return;
-   }
-   lda = std::max( 1, lda );
-   ldb = std::max( 1, ldb );
-   dtrsm_( &side, &uplo, &ta, &diag, &m, &n, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1 );
-}
-
-void qr( Mat& A, Mat& R ) {
-   const int m = A.m, k = A.n, q = std::min( m, k );
-   R.resize( q, k );
-   if ( q == 0 ) {
-      A.keep_cols( 0 );
-      return;
-   }
-   std::vector<double> tau( q );
-   int lwork = -1, info = 0;
-   double wq = 0;
-   const int lda = std::max( 1, m );
-   dgeqrf_( &m, &k, A.data(), &lda, tau.data(), &wq, &lwork, &info );
-   lwork = std::max( 1, int( wq ) );
-   std::vector<double> work( lwork );
-   dgeqrf_( &m, &k, A.data(), &lda, tau.data(), work.data(), &lwork, &info );
-   if ( info != 0 ) {
-      throw std::runtime_error( "dgeqrf failed" );
-   }
-   for ( int j = 0; j < k; ++j ) {
-      for ( int i = 0; i <= std::min( j, q - 1 ); ++i ) {
-         R( i, j ) = A( i, j );
-      }
-   }
-   lwork = -1;
-   dorgqr_( &m, &q, &q, A.data(), &lda, tau.data(), &wq, &lwork, &info );
-   lwork = std::max( 1, int( wq ) );
-   work.resize( lwork );
-   dorgqr_( &m, &q, &q, A.data(), &lda, tau.data(), work.data(), &lwork, &info );
-   if ( info != 0 ) {
-      throw std::runtime_error( "dorgqr failed" );
-   }
-   A.keep_cols( q );
-}
-
-void svd( Mat& A, Mat& U, std::vector<double>& s, Mat& VT ) {
-   const int m = A.m, n = A.n, q = std::min( m, n );
-   U.resize( m, q );
-   VT.resize( q, n );
-   s.assign( q, 0.0 );
-   if ( q == 0 ) {
-      return;
-   }
-   Mat keep = A;  // dgesdd can fail to converge; dgesvd then works on the original
-   const int lda = std::max( 1, m ), ldu = std::max( 1, m ), ldvt = std::max( 1, q );
-   int lwork = -1, info = 0;
-   double wq = 0;
-   std::vector<int> iwork( 8 * size_t( q ) );
-   dgesdd_( "S", &m, &n, A.data(), &lda, s.data(), U.data(), &ldu, VT.data(), &ldvt, &wq, &lwork, iwork.data(),
-            &info, 1 );
-   lwork = std::max( 1, int( wq ) );
-   std::vector<double> work( lwork );
-   dgesdd_( "S", &m, &n, A.data(), &lda, s.data(), U.data(), &ldu, VT.data(), &ldvt, work.data(), &lwork,
-            iwork.data(), &info, 1 );
-   if ( info == 0 ) {
-      return;
-   }
-   A = keep;
-   lwork = -1;
-   dgesvd_( "S", "S", &m, &n, A.data(), &lda, s.data(), U.data(), &ldu, VT.data(), &ldvt, &wq, &lwork, &info, 1,
-            1 );
-   lwork = std::max( 1, int( wq ) );
-   work.resize( lwork );
-   dgesvd_( "S", "S", &m, &n, A.data(), &lda, s.data(), U.data(), &ldu, VT.data(), &ldvt, work.data(), &lwork,
-            &info, 1, 1 );
-   if ( info != 0 ) {
-      throw std::runtime_error( "SVD failed" );
-   }
-}
 
 namespace {
 
@@ -176,6 +62,59 @@ double cpu_seconds() {
    return double( ru.ru_utime.tv_sec + ru.ru_stime.tv_sec ) + 1e-6 * double( ru.ru_utime.tv_usec + ru.ru_stime.tv_usec );
 }
 
+namespace {
+
+// dense_to_lowrank without the timer, for truncate too.
+void compress( Mat& P, double eps, Mat& U, Mat& V ) {
+   const int m = P.m, n = P.n;
+   double cmax = 0;
+   for ( int j = 0; j < n; ++j ) {
+      const double* c = P.col( j );
+      double s = 0;
+      for ( int i = 0; i < m; ++i ) {
+         s += c[ i ] * c[ i ];
+      }
+      cmax = std::max( cmax, s );
+   }
+   // P Pi = Q R, stopped once the columns left are below eps / 10 of the largest column (and so of
+   // the largest singular value); then R = W S Z^T from the SVD of R^T = (Z S) W^T.
+   std::vector<double> tau;
+   std::vector<int> perm;
+   const int q = m > 0 && n > 0 ? householder_qr( m, n, P.data(), tau, true, 0.1 * eps * std::sqrt( cmax ), &perm ) : 0;
+   if ( q == 0 ) {
+      U.resize( m, 0 );
+      V.resize( n, 0 );
+      return;
+   }
+   Mat T( n, q );
+   for ( int j = 0; j < n; ++j ) {
+      for ( int i = 0; i <= std::min( j, q - 1 ); ++i ) {
+         T( j, i ) = P( i, j );
+      }
+   }
+   std::vector<double> W, s;
+   jacobi_svd( n, q, T.data(), W, s );
+   const int r = kept_rank( s, eps );
+   U.resize( m, r );
+   V.resize( n, r );
+   for ( int j = 0; j < r; ++j ) {
+      for ( int i = 0; i < q; ++i ) {
+         U( i, j ) = W[ size_t( j ) * q + i ];
+      }
+      for ( int i = 0; i < n; ++i ) {
+         V( perm[ i ], j ) = T( i, j );
+      }
+   }
+   apply_q( m, q, P.data(), tau, r, U.data(), m );
+}
+
+}  // namespace
+
+void dense_to_lowrank( Mat& P, double eps, Mat& U, Mat& V ) {
+   LrTimer timer;
+   compress( P, eps, U, V );
+}
+
 void truncate( Mat& U, Mat& V, double eps ) {
    LrTimer timer;
    const int m = U.m, n = V.m, k = U.n;
@@ -185,51 +124,33 @@ void truncate( Mat& U, Mat& V, double eps ) {
    if ( V.n != k ) {
       throw std::runtime_error( "truncate: rank mismatch" );
    }
-   Mat Ru, Rv;
-   qr( U, Ru );  // U -> Qu (m x ku), Ru ku x k
-   qr( V, Rv );  // V -> Qv (n x kv), Rv kv x k
-   const int ku = U.n, kv = V.n;
-   Mat M( ku, kv );
-   gemm( 'N', 'T', ku, kv, k, 1.0, Ru.data(), ku, Rv.data(), kv, 0.0, M.data(), ku );
-   Mat W, ZT;
-   std::vector<double> s;
-   svd( M, W, s, ZT );
-   const int r = kept_rank( s, eps );
-   for ( int j = 0; j < r; ++j ) {
-      for ( int i = 0; i < W.m; ++i ) {
-         W( i, j ) *= s[ j ];
+   // U = Qu Ru, V = Qv Rv (reflectors kept in U and V), then the SVD of Ru Rv^T.
+   std::vector<double> tu, tv;
+   const int qu = householder_qr( m, k, U.data(), tu );
+   const int qv = householder_qr( n, k, V.data(), tv );
+   Mat Ru( qu, k ), Rv( qv, k );
+   for ( int j = 0; j < k; ++j ) {
+      for ( int i = 0; i <= std::min( j, qu - 1 ); ++i ) {
+         Ru( i, j ) = U( i, j );
+      }
+      for ( int i = 0; i <= std::min( j, qv - 1 ); ++i ) {
+         Rv( i, j ) = V( i, j );
       }
    }
+   // M = Ru Rv^T ~ Um Vm^T by the pivoted QR and SVD of dense_to_lowrank; then U = Qu Um, V = Qv Vm.
+   Mat M( qu, qv ), Um, Vm;
+   gemm( 'N', 'T', qu, qv, k, 1.0, Ru.data(), qu, Rv.data(), qv, 0.0, M.data(), qu );
+   compress( M, eps, Um, Vm );
+   const int r = Um.n;
    Mat Un( m, r ), Vn( n, r );
-   gemm( 'N', 'N', m, r, ku, 1.0, U.data(), m, W.data(), W.m, 0.0, Un.data(), m );
-   gemm( 'N', 'T', n, r, kv, 1.0, V.data(), n, ZT.data(), ZT.m, 0.0, Vn.data(), n );
+   for ( int j = 0; j < r; ++j ) {
+      std::copy( Um.col( j ), Um.col( j ) + qu, Un.col( j ) );
+      std::copy( Vm.col( j ), Vm.col( j ) + qv, Vn.col( j ) );
+   }
+   apply_q( m, qu, U.data(), tu, r, Un.data(), m );
+   apply_q( n, qv, V.data(), tv, r, Vn.data(), n );
    U = std::move( Un );
    V = std::move( Vn );
-}
-
-void dense_to_lowrank( Mat& P, double eps, Mat& U, Mat& V ) {
-   LrTimer timer;
-   const int m = P.m, n = P.n;
-   Mat W, ZT;
-   std::vector<double> s;
-   svd( P, W, s, ZT );
-   const int r = kept_rank( s, eps );
-   U.resize( m, r );
-   V.resize( n, r );
-   for ( int j = 0; j < r; ++j ) {
-      for ( int i = 0; i < m; ++i ) {
-         U( i, j ) = W( i, j ) * s[ j ];
-      }
-      for ( int i = 0; i < n; ++i ) {
-         V( i, j ) = ZT( j, i );
-      }
-   }
-}
-
-void set_blas_threads( int n ) {
-   if ( openblas_set_num_threads ) {
-      openblas_set_num_threads( std::max( 1, n ) );
-   }
 }
 
 namespace {

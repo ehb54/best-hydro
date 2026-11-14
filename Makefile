@@ -39,17 +39,19 @@ BEST_SRC   = best/besolve.f90 best/best.f best/input.f best/tgetgr.f best/triang
 # The H-matrix solver.  -ffp-contract=off keeps the compiler from fusing
 # multiplies and adds, so that its matrix entries match TGETGR's bit for bit.
 HM_SRC = hmatrix/src/api.cpp hmatrix/src/kernel.cpp hmatrix/src/cluster.cpp \
-         hmatrix/src/hmatrix.cpp hmatrix/src/mat.cpp hmatrix/src/gmres.cpp \
-         hmatrix/src/parallel.cpp
+         hmatrix/src/hmatrix.cpp hmatrix/src/mat.cpp hmatrix/src/dense.cpp \
+         hmatrix/src/gmres.cpp hmatrix/src/parallel.cpp
 HM_HDR = hmatrix/best_hmatrix.h $(wildcard hmatrix/src/*.h)
 HM_OBJ = $(HM_SRC:hmatrix/src/%.cpp=build/%.o)
 
 ifeq ($(HMATRIX),)
 BEST_HM      = best/hmstub.f90
 BEST_HM_LIBS =
+HM_TEST      =
 else
 BEST_HM      = $(HM_OBJ)
 BEST_HM_LIBS = $(CXXLIBS) -pthread
+HM_TEST      = bin/hm_dense_test
 endif
 
 RCOAL_SRC  = rcoal/rcoal.f rcoal/scoalesce.f rcoal/index.f
@@ -66,8 +68,15 @@ build:
 bin/best: $(BEST_SRC) $(BEST_HM) | bin build
 	$(FC) $(FFLAGS) $(OPENMP) $(R8) $(FIXED) -Jbuild -o $@ $(BEST_SRC) $(BEST_HM) $(LAPACK) $(BEST_HM_LIBS)
 
+# The dense kernels (gemm, QR, SVD) are vectorized at -O3 and may fuse multiplies and adds.
+build/dense.o: CXXFLAGS += -O3 -ffp-contract=fast
+
 build/%.o: hmatrix/src/%.cpp $(HM_HDR) | build
 	$(CXX) $(CXXFLAGS) -Ihmatrix -c -o $@ $<
+
+# Checks of the H-matrix solver's dense kernels; make test runs it.
+bin/hm_dense_test: hmatrix/test/dense_test.cpp build/dense.o build/mat.o $(HM_HDR) | bin
+	$(CXX) $(CXXFLAGS) -Ihmatrix/src -o $@ hmatrix/test/dense_test.cpp build/dense.o build/mat.o
 
 bin/rcoal: $(RCOAL_SRC) | bin
 	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(RCOAL_SRC)
@@ -76,7 +85,7 @@ bin/rcoal3: $(RCOAL3_SRC) | bin
 	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(RCOAL3_SRC)
 
 # Runs the examples and checks the results (needs Perl).
-test: all
+test: all $(HM_TEST)
 	test/run_tests.sh bin
 
 clean:

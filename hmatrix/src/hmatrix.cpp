@@ -488,6 +488,22 @@ void mul_block_dense( const Block* A, double alpha, const double* X, int ldx, in
    }
 }
 
+// The same, with the two block rows of a large hierarchical A on separate threads when one is spare.
+// Each row adds its two blocks in a fixed order, so the result does not depend on the threads.
+void mul_block_dense_par( const Block* A, double alpha, const double* X, int ldx, int p, double* Y, int ldy ) {
+   if ( A->type != BType::H || !big( A ) ) {
+      mul_block_dense( A, alpha, X, ldx, p, Y, ldy );
+      return;
+   }
+   auto row = [&]( int i ) {
+      for ( int j = 0; j < 2; ++j ) {
+         const Block* c = A->c( i, j );
+         mul_block_dense_par( c, alpha, X + ( c->c0 - A->c0 ), ldx, p, Y + ( c->r0 - A->r0 ), ldy );
+      }
+   };
+   par2( true, [&] { row( 0 ); }, [&] { row( 1 ); } );
+}
+
 // Y (p x nc) += alpha X (p x nr) A.
 void mul_dense_block( double alpha, const double* X, int ldx, int p, const Block* A, double* Y, int ldy ) {
    switch ( A->type ) {
@@ -519,31 +535,31 @@ void mul_dense_block( double alpha, const double* X, int ldx, int p, const Block
 // X (nr x p) <- L^-1 X, L unit lower triangular (a diagonal block after lu).
 void trsm_ll_dense( const Block* L, double* X, int ldx, int p ) {
    if ( L->type == BType::D ) {
-      trsm( 'L', 'L', 'N', 'U', L->nr, p, 1.0, L->D.data(), L->nr, X, ldx );
+      trsm_llnu( L->nr, p, L->D.data(), L->nr, X, ldx );
       return;
    }
    const int n0 = L->c( 0, 0 )->nr;
    trsm_ll_dense( L->c( 0, 0 ), X, ldx, p );
-   mul_block_dense( L->c( 1, 0 ), -1.0, X, ldx, p, X + n0, ldx );
+   mul_block_dense_par( L->c( 1, 0 ), -1.0, X, ldx, p, X + n0, ldx );
    trsm_ll_dense( L->c( 1, 1 ), X + n0, ldx, p );
 }
 
 // X (nr x p) <- U^-1 X, U upper triangular.
 void trsm_ul_dense( const Block* U, double* X, int ldx, int p ) {
    if ( U->type == BType::D ) {
-      trsm( 'L', 'U', 'N', 'N', U->nr, p, 1.0, U->D.data(), U->nr, X, ldx );
+      trsm_lunn( U->nr, p, U->D.data(), U->nr, X, ldx );
       return;
    }
    const int n0 = U->c( 0, 0 )->nr;
    trsm_ul_dense( U->c( 1, 1 ), X + n0, ldx, p );
-   mul_block_dense( U->c( 0, 1 ), -1.0, X + n0, ldx, p, X, ldx );
+   mul_block_dense_par( U->c( 0, 1 ), -1.0, X + n0, ldx, p, X, ldx );
    trsm_ul_dense( U->c( 0, 0 ), X, ldx, p );
 }
 
 // X (p x nc) <- X U^-1, U upper triangular.
 void trsm_ur_dense( const Block* U, double* X, int ldx, int p ) {
    if ( U->type == BType::D ) {
-      trsm( 'R', 'U', 'N', 'N', p, U->nc, 1.0, U->D.data(), U->nc, X, ldx );
+      trsm_runn( p, U->nc, U->D.data(), U->nc, X, ldx );
       return;
    }
    const int n0 = U->c( 0, 0 )->nc;
@@ -948,10 +964,9 @@ void HMatrix::add_rank1( double gamma, const double* u, const double* v ) {
 }
 
 void HMatrix::lu_solve( double* X, int ldx, int p ) const {
-   parallel_for( p, [&]( long j, int ) {
-      trsm_ll_dense( root_.get(), X + size_t( j ) * ldx, ldx, 1 );
-      trsm_ul_dense( root_.get(), X + size_t( j ) * ldx, ldx, 1 );
-   } );
+   // All p columns at once, so that each block is read once per solve (block-row parallel inside).
+   trsm_ll_dense( root_.get(), X, ldx, p );
+   trsm_ul_dense( root_.get(), X, ldx, p );
 }
 
 }  // namespace bh

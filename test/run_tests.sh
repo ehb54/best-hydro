@@ -53,6 +53,15 @@ else
    bad "best: 2eu7_02562 -na -v -mw 30000 (see $d)"
 fi
 
+# The H-matrix solver's dense kernels (built with it only).
+if [ -x "$bin/hm_dense_test" ]; then
+   "$bin/hm_dense_test" > "$work/hm_dense_test.out" 2>&1
+   while read -r st rest; do
+      if [ "$st" = ok ]; then ok "$rest"; else bad "$rest"; fi
+   done < <(sed -n -E 's/^(ok|FAIL) *- */\1 /p' "$work/hm_dense_test.out")
+   grep -q -E '^(ok|FAIL)' "$work/hm_dense_test.out" || bad "hm_dense_test printed nothing (see $work/hm_dense_test.out)"
+fi
+
 # BEST with the H-matrix solver (-hm), forced on this small mesh.  With
 # BEST_HMATRIX_CHECK set, BEST also fills GR densely and logs whether the
 # solver's entries are TGETGR's bit for bit.  The results must agree with the

@@ -1,9 +1,11 @@
-// BEST H-matrix solver: dense column-major matrices and the BLAS/LAPACK calls the solver needs.
+// BEST H-matrix solver: dense column-major matrices and the compression of low-rank products.
 // Copyright (c) 2026 E. H. Brookes.  MIT License; see LICENSE.
 #pragma once
 
 #include <cstddef>
 #include <vector>
+
+#include "dense.h"
 
 namespace bh {
 
@@ -39,22 +41,11 @@ struct Mat {
    }
 };
 
-// C = alpha op(A) op(B) + beta C (BLAS dgemm; nothing happens when m or n is 0).
-void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A, int lda, const double* B,
-           int ldb, double beta, double* C, int ldc );
-// B = alpha op(A)^-1 B or alpha B op(A)^-1 (BLAS dtrsm).
-void trsm( char side, char uplo, char ta, char diag, int m, int n, double alpha, const double* A, int lda,
-           double* B, int ldb );
-
-// Thin QR of A (m x k): on return A holds Q (m x min(m, k)) and R is min(m, k) x k.
-void qr( Mat& A, Mat& R );
-// Economy SVD of A (m x n; A is destroyed): A = U diag(s) VT, U m x q, VT q x n, q = min(m, n).
-void svd( Mat& A, Mat& U, std::vector<double>& s, Mat& VT );
-
 // Truncates the low-rank product U V^T (U m x k, V n x k) to the rank r at which the singular values
 // left out are all at most eps times the largest one; U and V are replaced by m x r and n x r factors.
 void truncate( Mat& U, Mat& V, double eps );
-// The same for a dense m x n matrix P (destroyed): P ~ U V^T.
+// The same for a dense m x n matrix P (destroyed): P ~ U V^T.  Uses QR with column pivoting, which
+// stops once the columns left are below a tenth of the tolerance, then an SVD of the triangle.
 void dense_to_lowrank( Mat& P, double eps, Mat& U, Mat& V );
 
 // Calls of truncate() and dense_to_lowrank() and the CPU seconds spent in them (all threads) since
@@ -62,9 +53,6 @@ void dense_to_lowrank( Mat& P, double eps, Mat& U, Mat& V );
 void lowrank_stats( long& calls, double& seconds, bool reset );
 // CPU seconds used by this process (all threads).
 double cpu_seconds();
-
-// Threads for the BLAS library's own parallelism (OpenBLAS only; ignored otherwise).
-void set_blas_threads( int n );
 
 // Peak and current resident memory of this process in bytes (Linux /proc; 0 elsewhere).
 size_t peak_rss();

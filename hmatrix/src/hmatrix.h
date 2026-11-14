@@ -72,7 +72,7 @@ class HMatrix {
    // In-place H-LU without pivoting: afterwards the blocks hold L (unit lower) and U, with every
    // low-rank result truncated at eps.  Returns the smallest |pivot| / largest |pivot| seen.
    double lu( double eps );
-   // X <- (L U)^-1 X for p columns, after lu().  Parallel over the columns.
+   // X <- (L U)^-1 X for p columns, after lu(); all columns at once, parallel over block rows.
    void lu_solve( double* X, int ldx, int p ) const;
    // A <- A + gamma u v^T (u, v in tree order): appended to every low-rank leaf (rank + 1) and added to
    // every dense leaf.
