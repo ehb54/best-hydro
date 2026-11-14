@@ -77,16 +77,34 @@ int env_threads() {
    return n > 0 ? n : 0;
 }
 
+template <class Elt>
+struct Mats {
+   std::unique_ptr<HMatrixT<Elt>> H;  // GR + the deflation term; with direct, its H-LU factors
+   std::unique_ptr<HMatrixT<Elt>> P;  // GMRES: the preconditioner's H-LU factors
+};
+
 struct Solver {
    Mesh mesh;
    std::unique_ptr<Kernel> K;
    ClusterTree ct;
-   std::unique_ptr<HMatrix> H;  // GR + the deflation term; with direct, its H-LU factors
-   std::unique_ptr<HMatrix> P;  // GMRES: the preconditioner's H-LU factors
+   bool single = false;  // the blocks in single precision: f, otherwise d
+   Mats<double> d;
+   Mats<float> f;
    bool direct = false;
    double eps = 0, tol = 0;
    int restart = kRestart, maxsteps = kMaxSteps;
 };
+
+template <class Elt>
+Mats<Elt>& mats( Solver& s );
+template <>
+Mats<double>& mats<double>( Solver& s ) {
+   return s.d;
+}
+template <>
+Mats<float>& mats<float>( Solver& s ) {
+   return s.f;
+}
 
 std::unique_ptr<Solver> g;
 
@@ -100,10 +118,14 @@ double h_kb_per_tri( int n, double eps ) {
    return std::max( 45.0, a + b * ln );  // at least the dense near field
 }
 
-double estimate_bytes( int n, double eps, bool direct, double eps_pre ) {
+double estimate_bytes( int n, double eps, bool direct, double eps_pre, bool single ) {
    double kb = h_kb_per_tri( n, eps ) * ( direct ? 1.15 : 1.0 );
    if ( !direct ) {
       kb += eps_pre >= 0.1 ? std::max( 3.0, -13.0 + 3.5 * std::log( double( n ) ) ) : h_kb_per_tri( n, eps_pre );
+   }
+   // Single precision halves the blocks.
+   if ( single ) {
+      kb *= 0.5;
    }
    // Heap overhead, and GMRES's vectors for six right-hand sides.
    kb = 1.3 * kb + ( direct ? 0.5 : 4.5 );
@@ -148,7 +170,8 @@ void from_tree( const ClusterTree& ct, const double* Bt, int q, double* B ) {
    }, 1024 );
 }
 
-void say_stats( const char* what, const HMatrix& h, int n, double seconds ) {
+template <class Elt>
+void say_stats( const char* what, const HMatrixT<Elt>& h, int n, double seconds ) {
    const HStats st = h.stats();
    const double dense = 8.0 * 9.0 * double( n ) * n;
    say( "%s in %.1f s: %.2f GB (%.0f KB per triangle, %.2f%% of dense), %ld dense and %ld low-rank blocks, "
@@ -167,6 +190,100 @@ void trim() {
 void say_memory() {
    say( "memory: resident %.2f GB, peak %.2f GB, available %.2f GB", gb( double( current_rss() ) ),
         gb( double( peak_rss() ) ), gb( double( mem_available() ) ) );
+}
+
+// bhm_build after the cluster tree and the memory check, with the blocks in Elt.
+template <class Elt>
+int build_t( Solver& s, double eps, double eps_pre, double gdef, const double* xmu ) {
+   const int n = s.mesh.n, n3 = 3 * n;
+   Mats<Elt>& m = mats<Elt>( s );
+   HOptions opt;
+   opt.eps = eps;
+   opt.eta = kEta;
+   long calls = 0;
+   double t = now();
+   m.H = std::make_unique<HMatrixT<Elt>>( HMatrixT<Elt>::build( s.ct, *s.K, opt, &calls ) );
+   std::vector<double> mt( n3 );
+   to_tree( s.ct, xmu, 1, mt.data() );
+   m.H->add_rank1( gdef, mt.data(), mt.data() );
+   say_stats( "H-matrix", *m.H, n, now() - t );
+   say( "H-matrix: eps %.0e, eta %.1f, %.3g kernel blocks per N^2, %s precision", eps, kEta,
+        double( calls ) / ( double( n ) * n ), s.single ? "single" : "double" );
+   trim();
+   say_memory();
+
+   long lrc = 0;
+   double lrs = 0;
+   lowrank_stats( lrc, lrs, true );
+   HMatrix::profile( true );
+   const double cpu0 = cpu_seconds();
+   t = now();
+   if ( s.direct ) {
+      const double piv = m.H->lu( eps );
+      say_stats( "H-LU factors", *m.H, n, now() - t );
+      say( "H-LU: eps %.0e, smallest pivot ratio %.2e", eps, piv );
+   } else {
+      m.P = std::make_unique<HMatrixT<Elt>>( m.H->copy( eps_pre, true ) );
+      const double piv = m.P->lu( eps_pre );
+      say_stats( "GMRES preconditioner (H-LU factors)", *m.P, n, now() - t );
+      say( "GMRES preconditioner: eps %.0e, near field compressed, smallest pivot ratio %.2e; GMRES(%d) to a "
+           "relative residual of %.0e",
+           eps_pre, piv, s.restart, s.tol );
+   }
+   lowrank_stats( lrc, lrs, true );
+   say( "factorization: %.0f CPU s, %ld truncations taking %.0f CPU s; by site: %s", cpu_seconds() - cpu0, lrc, lrs,
+        HMatrix::profile( true ).c_str() );
+   trim();
+   say_memory();
+   return 0;
+}
+
+// bhm_solve with the blocks in Elt: Bt holds the right-hand sides in tree order, and the solutions
+// on return.
+template <class Elt>
+int solve_t( Solver& s, int nrhs, std::vector<double>& Bt ) {
+   const int n3 = 3 * s.mesh.n;
+   const double t = now();
+   Mats<Elt>& m = mats<Elt>( s );
+   if ( s.direct ) {
+      m.H->lu_solve( Bt.data(), n3, nrhs );
+      say( "solve: %d right-hand sides with the H-LU factors, %.2f s", nrhs, now() - t );
+      return 0;
+   }
+   std::vector<double> Xt( size_t( n3 ) * nrhs );
+   const HMatrixT<Elt>& H = *m.H;
+   const HMatrixT<Elt>& P = *m.P;
+   double ta = 0, tm = 0;
+   int na = 0, nm = 0;
+   Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) {
+      const double t0 = now();
+      H.matvec( X, ldx, q, Y, ldy );
+      ta += now() - t0;
+      na += q;
+   };
+   Precond M = [&]( double* X, int ldx, int q ) {
+      const double t0 = now();
+      P.lu_solve( X, ldx, q );
+      tm += now() - t0;
+      nm += q;
+   };
+   const GmresResult r = gmres( n3, nrhs, A, M, Bt.data(), n3, Xt.data(), n3, s.tol, s.restart, s.maxsteps );
+   Bt.swap( Xt );
+   int imin = 1 << 30, imax = 0;
+   double worst = 0;
+   for ( int c = 0; c < nrhs; ++c ) {
+      imin = std::min( imin, r.iters[ c ] );
+      imax = std::max( imax, r.iters[ c ] );
+      worst = std::max( worst, r.relres[ c ] );
+   }
+   say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s "
+        "(products %.2f s for %d vectors, preconditioner %.2f s for %d)",
+        nrhs, imin, imax, worst, now() - t, ta, na, tm, nm );
+   if ( !( worst <= s.tol ) ) {
+      say( "error: GMRES did not reach a relative residual of %.0e in %d steps", s.tol, s.maxsteps );
+      return 1;
+   }
+   return 0;
 }
 
 }  // namespace
@@ -234,11 +351,12 @@ void bhm_entries( int i0, int m, int j0, int nc, double* a, int lda ) {
 
 double bhm_diag_mean( void ) { return g->K->diag_mean(); }
 
-int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu ) {
+int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single ) {
    return guarded( [&] {
       Solver& s = *g;
-      const int n = s.mesh.n, n3 = 3 * n;
+      const int n = s.mesh.n;
       s.direct = direct != 0;
+      s.single = single != 0;
       s.eps = eps;
       s.tol = env_double( "BEST_HMATRIX_GMRES_TOL", kTolFactor * eps );
       // The H-LU forks for blocks of at least this many leaf clusters a side.
@@ -248,53 +366,15 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
       say( "cluster tree: depth %d, %zu leaf clusters of %d to %d triangles, %.2f s", s.ct.depth, s.ct.leaves.size(),
            n >> s.ct.depth, ( n + ( 1 << s.ct.depth ) - 1 ) >> s.ct.depth, now() - t );
 
-      const double need = estimate_bytes( n, eps, s.direct, eps_pre ), avail = double( mem_available() );
+      const double need = estimate_bytes( n, eps, s.direct, eps_pre, s.single ), avail = double( mem_available() );
       say( "memory: about %.1f GB needed (estimate), %.1f GB available", gb( need ), gb( avail ) );
       if ( avail > 0 && need > avail && env_double( "BEST_HMATRIX_MEMCHECK", 1 ) != 0 ) {
-         say( "error: not enough memory for the H-matrix solver at eps %.0e; a larger -he eps needs less "
+         say( "error: not enough memory for the H-matrix solver at eps %.0e; a larger -he eps needs less%s "
               "(set BEST_HMATRIX_MEMCHECK=0 to try anyway)",
-              eps );
+              eps, s.single ? "" : ", and -hs (single precision) about half" );
          return 1;
       }
-
-      HOptions opt;
-      opt.eps = eps;
-      opt.eta = kEta;
-      long calls = 0;
-      t = now();
-      s.H = std::make_unique<HMatrix>( HMatrix::build( s.ct, *s.K, opt, &calls ) );
-      std::vector<double> mt( n3 );
-      to_tree( s.ct, xmu, 1, mt.data() );
-      s.H->add_rank1( gdef, mt.data(), mt.data() );
-      say_stats( "H-matrix", *s.H, n, now() - t );
-      say( "H-matrix: eps %.0e, eta %.1f, %.3g kernel blocks per N^2", eps, kEta, double( calls ) / ( double( n ) * n ) );
-      trim();
-      say_memory();
-
-      long lrc = 0;
-      double lrs = 0;
-      lowrank_stats( lrc, lrs, true );
-      HMatrix::profile( true );
-      const double cpu0 = cpu_seconds();
-      t = now();
-      if ( s.direct ) {
-         const double piv = s.H->lu( eps );
-         say_stats( "H-LU factors", *s.H, n, now() - t );
-         say( "H-LU: eps %.0e, smallest pivot ratio %.2e", eps, piv );
-      } else {
-         s.P = std::make_unique<HMatrix>( s.H->copy( eps_pre, true ) );
-         const double piv = s.P->lu( eps_pre );
-         say_stats( "GMRES preconditioner (H-LU factors)", *s.P, n, now() - t );
-         say( "GMRES preconditioner: eps %.0e, near field compressed, smallest pivot ratio %.2e; GMRES(%d) to a "
-              "relative residual of %.0e",
-              eps_pre, piv, s.restart, s.tol );
-      }
-      lowrank_stats( lrc, lrs, true );
-      say( "factorization: %.0f CPU s, %ld truncations taking %.0f CPU s; by site: %s", cpu_seconds() - cpu0, lrc, lrs,
-           HMatrix::profile( true ).c_str() );
-      trim();
-      say_memory();
-      return 0;
+      return s.single ? build_t<float>( s, eps, eps_pre, gdef, xmu ) : build_t<double>( s, eps, eps_pre, gdef, xmu );
    } );
 }
 
@@ -302,49 +382,11 @@ int bhm_solve( int nrhs, double* b ) {
    return guarded( [&] {
       Solver& s = *g;
       const int n3 = 3 * s.mesh.n;
-      const double t = now();
       std::vector<double> Bt( size_t( n3 ) * nrhs );
       to_tree( s.ct, b, nrhs, Bt.data() );
-      if ( s.direct ) {
-         s.H->lu_solve( Bt.data(), n3, nrhs );
-         from_tree( s.ct, Bt.data(), nrhs, b );
-         say( "solve: %d right-hand sides with the H-LU factors, %.2f s", nrhs, now() - t );
-         return 0;
-      }
-      std::vector<double> Xt( size_t( n3 ) * nrhs );
-      const HMatrix& H = *s.H;
-      const HMatrix& P = *s.P;
-      double ta = 0, tm = 0;
-      int na = 0, nm = 0;
-      Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) {
-         const double t0 = now();
-         H.matvec( X, ldx, q, Y, ldy );
-         ta += now() - t0;
-         na += q;
-      };
-      Precond M = [&]( double* X, int ldx, int q ) {
-         const double t0 = now();
-         P.lu_solve( X, ldx, q );
-         tm += now() - t0;
-         nm += q;
-      };
-      const GmresResult r = gmres( n3, nrhs, A, M, Bt.data(), n3, Xt.data(), n3, s.tol, s.restart, s.maxsteps );
-      from_tree( s.ct, Xt.data(), nrhs, b );
-      int imin = 1 << 30, imax = 0;
-      double worst = 0;
-      for ( int c = 0; c < nrhs; ++c ) {
-         imin = std::min( imin, r.iters[ c ] );
-         imax = std::max( imax, r.iters[ c ] );
-         worst = std::max( worst, r.relres[ c ] );
-      }
-      say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s "
-           "(products %.2f s for %d vectors, preconditioner %.2f s for %d)",
-           nrhs, imin, imax, worst, now() - t, ta, na, tm, nm );
-      if ( !( worst <= s.tol ) ) {
-         say( "error: GMRES did not reach a relative residual of %.0e in %d steps", s.tol, s.maxsteps );
-         return 1;
-      }
-      return 0;
+      const int info = s.single ? solve_t<float>( s, nrhs, Bt ) : solve_t<double>( s, nrhs, Bt );
+      from_tree( s.ct, Bt.data(), nrhs, b );
+      return info;
    } );
 }
 

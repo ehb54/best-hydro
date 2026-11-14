@@ -124,6 +124,78 @@ double trsm_error() {
    return worst;
 }
 
+std::vector<float> to_float( const std::vector<double>& v ) { return std::vector<float>( v.begin(), v.end() ); }
+std::vector<double> to_double( const std::vector<float>& v ) { return std::vector<double>( v.begin(), v.end() ); }
+
+// Single precision (the H-matrix with -hs): gemm with float A or B gives exactly the double gemm of
+// the same values, and so do the triangular solves with a float triangle; nbits counts the entries
+// that differ in any bit.  With a float C, returns the largest |C - double result| / (k max|A|
+// max|B|), which should be float rounding.
+double mixed_error( long& nbits ) {
+   const int shapes[][ 3 ] = { { 7, 3, 5 }, { 96, 6, 96 }, { 96, 11, 300 },
+                               { 130, 70, 260 }, { 300, 5, 17 }, { 257, 40, 9 } };
+   double worst = 0;
+   nbits = 0;
+   for ( char ta : { 'N', 'T' } ) {
+      for ( char tb : { 'N', 'T' } ) {
+         for ( const auto& s : shapes ) {
+            const int m = s[ 0 ], n = s[ 1 ], k = s[ 2 ];
+            const int lda = ( ta == 'N' ? m : k ) + 3, ldb = ( tb == 'N' ? k : n ) + 2, ldc = m + 1;
+            const std::vector<float> Af = to_float( random( size_t( lda ) * ( ta == 'N' ? k : m ) ) );
+            const std::vector<float> Bf = to_float( random( size_t( ldb ) * ( tb == 'N' ? n : k ) ) );
+            const std::vector<double> A = to_double( Af ), B = to_double( Bf ), C0 = random( size_t( ldc ) * n );
+            const double alpha = -0.7, beta = 0.3;
+            std::vector<double> C = C0, C1 = C0, C2 = C0, C3 = C0;
+            gemm( ta, tb, m, n, k, alpha, A.data(), lda, B.data(), ldb, beta, C.data(), ldc );
+            gemm( ta, tb, m, n, k, alpha, Af.data(), lda, B.data(), ldb, beta, C1.data(), ldc );
+            gemm( ta, tb, m, n, k, alpha, A.data(), lda, Bf.data(), ldb, beta, C2.data(), ldc );
+            gemm( ta, tb, m, n, k, alpha, Af.data(), lda, Bf.data(), ldb, beta, C3.data(), ldc );
+            std::vector<float> Cf = to_float( C0 );
+            const std::vector<double> Cf0 = to_double( Cf );
+            std::vector<double> Cd = Cf0;
+            gemm( ta, tb, m, n, k, alpha, Af.data(), lda, Bf.data(), ldb, beta, Cf.data(), ldc );
+            gemm( ta, tb, m, n, k, alpha, A.data(), lda, B.data(), ldb, beta, Cd.data(), ldc );
+            for ( size_t i = 0; i < C.size(); ++i ) {
+               nbits += ( C1[ i ] != C[ i ] ) + ( C2[ i ] != C[ i ] ) + ( C3[ i ] != C[ i ] );
+               worst = std::max( worst, std::fabs( double( Cf[ i ] ) - Cd[ i ] ) / k );
+            }
+         }
+      }
+   }
+   for ( int m : { 5, 65, 200 } ) {
+      for ( int n : { 1, 70 } ) {
+         std::vector<double> T = random( size_t( m ) * m );
+         for ( double& x : T ) {
+            x *= 0.3 / std::sqrt( double( m ) );
+         }
+         for ( int i = 0; i < m; ++i ) {
+            T[ size_t( i ) * m + i ] = 2.0 + 0.5 * T[ size_t( i ) * m + i ];
+         }
+         const std::vector<float> Tf = to_float( T );
+         const std::vector<double> Td = to_double( Tf );
+         for ( int form = 0; form < 3; ++form ) {
+            const int rows = form == 2 ? n : m, cols = form == 2 ? m : n;
+            const std::vector<double> B = random( size_t( rows ) * cols );
+            std::vector<double> X = B, Xf = B;
+            if ( form == 0 ) {
+               trsm_llnu( m, n, Td.data(), m, X.data(), rows );
+               trsm_llnu( m, n, Tf.data(), m, Xf.data(), rows );
+            } else if ( form == 1 ) {
+               trsm_lunn( m, n, Td.data(), m, X.data(), rows );
+               trsm_lunn( m, n, Tf.data(), m, Xf.data(), rows );
+            } else {
+               trsm_runn( n, m, Td.data(), m, X.data(), rows );
+               trsm_runn( n, m, Tf.data(), m, Xf.data(), rows );
+            }
+            for ( size_t i = 0; i < X.size(); ++i ) {
+               nbits += Xf[ i ] != X[ i ];
+            }
+         }
+      }
+   }
+   return worst;
+}
+
 // Q R = A and Q^T Q = I, with and without pivoting, for tall, square and wide A.
 double qr_error() {
    double worst = 0;
@@ -301,6 +373,10 @@ int main() {
    check( eg < 1e-14, "gemm against loops", eg );
    const double et = trsm_error();
    check( et < 1e-13, "triangular solves", et );
+   long nbits = 0;
+   const double em = mixed_error( nbits );
+   check( nbits == 0, "gemm and triangular solves with float operands: the same as double", double( nbits ) );
+   check( em < 1e-6, "gemm into a float matrix: within float rounding", em );
    const double eq = qr_error();
    check( eq < 1e-13, "Householder QR, with and without pivoting", eq );
    const double es = svd_error();

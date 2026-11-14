@@ -21,8 +21,9 @@ namespace bh {
 
 namespace {
 
-std::unique_ptr<Block> make_blocks( const ClusterTree& ct, int t, int s, double eta ) {
-   auto b = std::make_unique<Block>();
+template <class Elt>
+std::unique_ptr<BlockT<Elt>> make_blocks( const ClusterTree& ct, int t, int s, double eta ) {
+   auto b = std::make_unique<BlockT<Elt>>();
    const Cluster& ctl = ct.c[ t ];
    const Cluster& csl = ct.c[ s ];
    b->t = t;
@@ -43,14 +44,15 @@ std::unique_ptr<Block> make_blocks( const ClusterTree& ct, int t, int s, double 
       b->type = BType::H;
       for ( int i = 0; i < 2; ++i ) {
          for ( int j = 0; j < 2; ++j ) {
-            b->ch[ 2 * i + j ] = make_blocks( ct, ctl.son[ i ], csl.son[ j ], eta );
+            b->ch[ 2 * i + j ] = make_blocks<Elt>( ct, ctl.son[ i ], csl.son[ j ], eta );
          }
       }
    }
    return b;
 }
 
-void collect_leaves( Block* b, std::vector<Block*>& out ) {
+template <class Elt>
+void collect_leaves( BlockT<Elt>* b, std::vector<BlockT<Elt>*>& out ) {
    if ( b->type == BType::H ) {
       for ( auto& c : b->ch ) {
          collect_leaves( c.get(), out );
@@ -241,50 +243,58 @@ bool aca( const Kernel& K, const int* rt, int m, const int* ct, int n, double ep
    return true;
 }
 
-void fill_leaf( Block* b, const ClusterTree& ct, const Kernel& K, const HOptions& opt, long& calls ) {
+// Computes a leaf in double and stores it in the block's precision.
+template <class Elt>
+void fill_leaf( BlockT<Elt>* b, const ClusterTree& ct, const Kernel& K, const HOptions& opt, long& calls ) {
    const Cluster& t = ct.c[ b->t ];
    const Cluster& s = ct.c[ b->s ];
    const int* rt = ct.perm.data() + t.beg;
    const int* st = ct.perm.data() + s.beg;
+   Mat U, V;
    if ( b->type == BType::D ) {
-      b->D.resize( b->nr, b->nc );
-      K.fill( rt, t.n, st, s.n, b->D.data(), b->nr );
+      Mat D( b->nr, b->nc );
+      K.fill( rt, t.n, st, s.n, D.data(), b->nr );
       calls += long( t.n ) * s.n;
       if ( opt.near && b->t != b->s ) {
-         Mat P = b->D, U, V;
+         Mat P = D;
          dense_to_lowrank( P, opt.eps, U, V );
          if ( double( U.n ) * ( b->nr + b->nc ) < double( b->nr ) * b->nc ) {
             b->type = BType::R;
-            b->U = std::move( U );
-            b->V = std::move( V );
-            b->D.release();
+            store( b->U, std::move( U ) );
+            store( b->V, std::move( V ) );
+            return;
          }
       }
+      store( b->D, std::move( D ) );
       return;
    }
    const int kmax = std::max( 3, std::min( b->nr, b->nc ) / 2 );
    bool done = false;
    if ( long( t.n ) * s.n > opt.dense_small ) {
-      done = aca( K, rt, t.n, st, s.n, opt.aca_factor * opt.eps, kmax, b->U, b->V, calls );
+      done = aca( K, rt, t.n, st, s.n, opt.aca_factor * opt.eps, kmax, U, V, calls );
       if ( done ) {
-         truncate( b->U, b->V, opt.eps );
+         truncate( U, V, opt.eps );
       }
    }
    if ( !done ) {
       Mat P( b->nr, b->nc );
       K.fill( rt, t.n, st, s.n, P.data(), b->nr );
       calls += long( t.n ) * s.n;
-      dense_to_lowrank( P, opt.eps, b->U, b->V );
+      dense_to_lowrank( P, opt.eps, U, V );
    }
+   store( b->U, std::move( U ) );
+   store( b->V, std::move( V ) );
 }
 
 }  // namespace
 
-HMatrix::HMatrix( const ClusterTree& ct, std::unique_ptr<Block> root ) : ct_( &ct ), root_( std::move( root ) ) {
+template <class Elt>
+HMatrixT<Elt>::HMatrixT( const ClusterTree& ct, std::unique_ptr<Block> root ) : ct_( &ct ), root_( std::move( root ) ) {
    index();
 }
 
-void HMatrix::index() {
+template <class Elt>
+void HMatrixT<Elt>::index() {
    leaves_.clear();
    collect_leaves( root_.get(), leaves_ );
    rows_.assign( ct_->leaves.size(), {} );
@@ -296,8 +306,9 @@ void HMatrix::index() {
    }
 }
 
-HMatrix HMatrix::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
-   HMatrix h( ct, make_blocks( ct, 0, 0, opt.eta ) );
+template <class Elt>
+HMatrixT<Elt> HMatrixT<Elt>::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
+   HMatrixT h( ct, make_blocks<Elt>( ct, 0, 0, opt.eta ) );
    // Largest blocks first, so the long ACA runs start early.
    std::vector<Block*> order = h.leaves_;
    std::stable_sort( order.begin(), order.end(),
@@ -315,8 +326,9 @@ HMatrix HMatrix::build( const ClusterTree& ct, const Kernel& K, const HOptions& 
 
 namespace {
 
-std::unique_ptr<Block> copy_block( const Block* b ) {
-   auto c = std::make_unique<Block>();
+template <class Elt>
+std::unique_ptr<BlockT<Elt>> copy_block( const BlockT<Elt>* b ) {
+   auto c = std::make_unique<BlockT<Elt>>();
    c->r0 = b->r0;
    c->nr = b->nr;
    c->c0 = b->c0;
@@ -335,36 +347,40 @@ std::unique_ptr<Block> copy_block( const Block* b ) {
 
 }  // namespace
 
-HMatrix HMatrix::copy( double eps, bool near ) const {
-   HMatrix h( *ct_, copy_block( root_.get() ) );
+template <class Elt>
+HMatrixT<Elt> HMatrixT<Elt>::copy( double eps, bool near ) const {
+   HMatrixT h( *ct_, copy_block( root_.get() ) );
    // Same structure, so the leaves are in the same order.
    parallel_for( long( leaves_.size() ), [&]( long i, int ) {
       const Block* s = leaves_[ i ];
       Block* d = h.leaves_[ i ];
       if ( s->type == BType::D ) {
          if ( near && eps > 0 && s->t != s->s ) {
-            Mat P = s->D, U, V;
+            Mat P = to_double( s->D ), U, V;
             dense_to_lowrank( P, eps, U, V );
             if ( double( U.n ) * ( s->nr + s->nc ) < double( s->nr ) * s->nc ) {
                d->type = BType::R;
-               d->U = std::move( U );
-               d->V = std::move( V );
+               store( d->U, std::move( U ) );
+               store( d->V, std::move( V ) );
                return;
             }
          }
          d->D = s->D;
+      } else if ( eps > 0 ) {
+         Mat U = to_double( s->U ), V = to_double( s->V );
+         truncate( U, V, eps );
+         store( d->U, std::move( U ) );
+         store( d->V, std::move( V ) );
       } else {
          d->U = s->U;
          d->V = s->V;
-         if ( eps > 0 ) {
-            truncate( d->U, d->V, eps );
-         }
       }
    } );
    return h;
 }
 
-HStats HMatrix::stats() const {
+template <class Elt>
+HStats HMatrixT<Elt>::stats() const {
    HStats st;
    st.kmax_level.assign( ct_->depth + 1, 0 );
    st.nlr_level.assign( ct_->depth + 1, 0 );
@@ -372,11 +388,11 @@ HStats HMatrix::stats() const {
    for ( const Block* b : leaves_ ) {
       if ( b->type == BType::D ) {
          ++st.n_dense;
-         st.bytes_dense += double( b->nr ) * b->nc * sizeof( double );
+         st.bytes_dense += double( b->nr ) * b->nc * sizeof( Elt );
       } else {
          ++st.n_lowrank;
          const int k = b->rank();
-         st.bytes_lowrank += double( k ) * ( b->nr + b->nc ) * sizeof( double );
+         st.bytes_lowrank += double( k ) * ( b->nr + b->nc ) * sizeof( Elt );
          st.kmax = std::max( st.kmax, k );
          ksum += k;
          st.kmax_level[ b->level ] = std::max( st.kmax_level[ b->level ], k );
@@ -391,7 +407,8 @@ HStats HMatrix::stats() const {
 // Matvec
 // ---------------------------------------------------------------------------------------------
 
-void HMatrix::matvec( const double* X, int ldx, int p, double* Y, int ldy ) const {
+template <class Elt>
+void HMatrixT<Elt>::matvec( const double* X, int ldx, int p, double* Y, int ldy ) const {
    // V^T X for every low-rank leaf first, then each leaf cluster's rows, adding the blocks that
    // cover them in a fixed order.
    std::vector<Mat> Z( leaves_.size() );
@@ -459,10 +476,14 @@ void par2( bool doit, A&& a, B&& b ) {
    }
 }
 
-bool big( const Block* b ) { return double( b->nr ) * double( b->nc ) >= g_fork_min; }
+template <class Elt>
+bool big( const BlockT<Elt>* b ) {
+   return double( b->nr ) * double( b->nc ) >= g_fork_min;
+}
 
 // Y (nr x p) += alpha A X (nc x p).
-void mul_block_dense( const Block* A, double alpha, const double* X, int ldx, int p, double* Y, int ldy ) {
+template <class Elt, class TX>
+void mul_block_dense( const BlockT<Elt>* A, double alpha, const TX* X, int ldx, int p, double* Y, int ldy ) {
    switch ( A->type ) {
       case BType::D:
          gemm( 'N', 'N', A->nr, p, A->nc, alpha, A->D.data(), A->nr, X, ldx, 1.0, Y, ldy );
@@ -480,7 +501,7 @@ void mul_block_dense( const Block* A, double alpha, const double* X, int ldx, in
       case BType::H:
          for ( int i = 0; i < 2; ++i ) {
             for ( int j = 0; j < 2; ++j ) {
-               const Block* c = A->c( i, j );
+               const BlockT<Elt>* c = A->c( i, j );
                mul_block_dense( c, alpha, X + ( c->c0 - A->c0 ), ldx, p, Y + ( c->r0 - A->r0 ), ldy );
             }
          }
@@ -490,14 +511,15 @@ void mul_block_dense( const Block* A, double alpha, const double* X, int ldx, in
 
 // The same, with the two block rows of a large hierarchical A on separate threads when one is spare.
 // Each row adds its two blocks in a fixed order, so the result does not depend on the threads.
-void mul_block_dense_par( const Block* A, double alpha, const double* X, int ldx, int p, double* Y, int ldy ) {
+template <class Elt>
+void mul_block_dense_par( const BlockT<Elt>* A, double alpha, const double* X, int ldx, int p, double* Y, int ldy ) {
    if ( A->type != BType::H || !big( A ) ) {
       mul_block_dense( A, alpha, X, ldx, p, Y, ldy );
       return;
    }
    auto row = [&]( int i ) {
       for ( int j = 0; j < 2; ++j ) {
-         const Block* c = A->c( i, j );
+         const BlockT<Elt>* c = A->c( i, j );
          mul_block_dense_par( c, alpha, X + ( c->c0 - A->c0 ), ldx, p, Y + ( c->r0 - A->r0 ), ldy );
       }
    };
@@ -505,7 +527,8 @@ void mul_block_dense_par( const Block* A, double alpha, const double* X, int ldx
 }
 
 // Y (p x nc) += alpha X (p x nr) A.
-void mul_dense_block( double alpha, const double* X, int ldx, int p, const Block* A, double* Y, int ldy ) {
+template <class Elt>
+void mul_dense_block( double alpha, const double* X, int ldx, int p, const BlockT<Elt>* A, double* Y, int ldy ) {
    switch ( A->type ) {
       case BType::D:
          gemm( 'N', 'N', p, A->nc, A->nr, alpha, X, ldx, A->D.data(), A->nr, 1.0, Y, ldy );
@@ -523,7 +546,7 @@ void mul_dense_block( double alpha, const double* X, int ldx, int p, const Block
       case BType::H:
          for ( int i = 0; i < 2; ++i ) {
             for ( int j = 0; j < 2; ++j ) {
-               const Block* c = A->c( i, j );
+               const BlockT<Elt>* c = A->c( i, j );
                mul_dense_block( alpha, X + size_t( c->r0 - A->r0 ) * ldx, ldx, p, c,
                                 Y + size_t( c->c0 - A->c0 ) * ldy, ldy );
             }
@@ -533,7 +556,8 @@ void mul_dense_block( double alpha, const double* X, int ldx, int p, const Block
 }
 
 // X (nr x p) <- L^-1 X, L unit lower triangular (a diagonal block after lu).
-void trsm_ll_dense( const Block* L, double* X, int ldx, int p ) {
+template <class Elt>
+void trsm_ll_dense( const BlockT<Elt>* L, double* X, int ldx, int p ) {
    if ( L->type == BType::D ) {
       trsm_llnu( L->nr, p, L->D.data(), L->nr, X, ldx );
       return;
@@ -545,7 +569,8 @@ void trsm_ll_dense( const Block* L, double* X, int ldx, int p ) {
 }
 
 // X (nr x p) <- U^-1 X, U upper triangular.
-void trsm_ul_dense( const Block* U, double* X, int ldx, int p ) {
+template <class Elt>
+void trsm_ul_dense( const BlockT<Elt>* U, double* X, int ldx, int p ) {
    if ( U->type == BType::D ) {
       trsm_lunn( U->nr, p, U->D.data(), U->nr, X, ldx );
       return;
@@ -557,7 +582,8 @@ void trsm_ul_dense( const Block* U, double* X, int ldx, int p ) {
 }
 
 // X (p x nc) <- X U^-1, U upper triangular.
-void trsm_ur_dense( const Block* U, double* X, int ldx, int p ) {
+template <class Elt>
+void trsm_ur_dense( const BlockT<Elt>* U, double* X, int ldx, int p ) {
    if ( U->type == BType::D ) {
       trsm_runn( p, U->nc, U->D.data(), U->nc, X, ldx );
       return;
@@ -568,7 +594,9 @@ void trsm_ur_dense( const Block* U, double* X, int ldx, int p ) {
    trsm_ur_dense( U->c( 1, 1 ), X + size_t( n0 ) * ldx, ldx, p );
 }
 
-Mat transpose( const Mat& A ) {
+// The transpose, in double.
+template <class S>
+Mat transpose( const MatT<S>& A ) {
    Mat T( A.n, A.m );
    for ( int j = 0; j < A.n; ++j ) {
       for ( int i = 0; i < A.m; ++i ) {
@@ -579,7 +607,9 @@ Mat transpose( const Mat& A ) {
 }
 
 // C (R) <- C + alpha U V^T, truncated.  U: C->nr rows (ldu), V: C->nc rows (ldv), k columns.
-void add_lowrank_r( Block* C, double alpha, const double* U, int ldu, const double* V, int ldv, int k, double eps ) {
+template <class Elt>
+void add_lowrank_r( BlockT<Elt>* C, double alpha, const double* U, int ldu, const double* V, int ldv, int k,
+                    double eps ) {
    if ( k == 0 ) {
       return;
    }
@@ -599,12 +629,14 @@ void add_lowrank_r( Block* C, double alpha, const double* U, int ldu, const doub
       SiteTimer st( 0 );
       truncate( Un, Vn, eps );
    }
-   C->U = std::move( Un );
-   C->V = std::move( Vn );
+   store( C->U, std::move( Un ) );
+   store( C->V, std::move( Vn ) );
 }
 
 // C (any type) += alpha U V^T.
-void add_lowrank( Block* C, double alpha, const double* U, int ldu, const double* V, int ldv, int k, double eps ) {
+template <class Elt>
+void add_lowrank( BlockT<Elt>* C, double alpha, const double* U, int ldu, const double* V, int ldv, int k,
+                  double eps ) {
    if ( k == 0 ) {
       return;
    }
@@ -641,7 +673,8 @@ void add_lowrank( Block* C, double alpha, const double* U, int ldu, const double
 }
 
 // Pushes an H block's pending update down to its children (children that are H keep it pending).
-void flush( Block* C, double eps ) {
+template <class Elt>
+void flush( BlockT<Elt>* C, double eps ) {
    if ( C->type != BType::H || C->Pu.n == 0 ) {
       return;
    }
@@ -649,7 +682,7 @@ void flush( Block* C, double eps ) {
    C->Pu.release();
    C->Pv.release();
    auto child = [&]( int i, int j ) {
-      Block* c = C->c( i, j );
+      BlockT<Elt>* c = C->c( i, j );
       add_lowrank( c, 1.0, U.data() + ( c->r0 - C->r0 ), U.m, V.data() + ( c->c0 - C->c0 ), V.m, U.n, eps );
    };
    const bool f = big( C );
@@ -658,11 +691,12 @@ void flush( Block* C, double eps ) {
 }
 
 // A B ~ U V^T, A (r,k) and B (k,c) at the same level.
-void product_lowrank( const Block* A, const Block* B, double eps, Mat& U, Mat& V ) {
+template <class Elt>
+void product_lowrank( const BlockT<Elt>* A, const BlockT<Elt>* B, double eps, Mat& U, Mat& V ) {
    const int nr = A->nr, nc = B->nc;
    if ( A->type == BType::R ) {
       const int ka = A->rank();
-      U = A->U;
+      U = to_double( A->U );
       V.resize( nc, ka );
       if ( ka == 0 ) {
          return;
@@ -675,7 +709,7 @@ void product_lowrank( const Block* A, const Block* B, double eps, Mat& U, Mat& V
    }
    if ( B->type == BType::R ) {
       const int kb = B->rank();
-      V = B->V;
+      V = to_double( B->V );
       U.resize( nr, kb );
       if ( kb == 0 ) {
          return;
@@ -747,7 +781,8 @@ void product_lowrank( const Block* A, const Block* B, double eps, Mat& U, Mat& V
 }
 
 // C += alpha A B, A (r,k), B (k,c), C (r,c), all at one level.
-void addmul( Block* C, double alpha, const Block* A, const Block* B, double eps ) {
+template <class Elt>
+void addmul( BlockT<Elt>* C, double alpha, const BlockT<Elt>* A, const BlockT<Elt>* B, double eps ) {
    if ( C->type == BType::D ) {
       if ( A->type == BType::R ) {
          const int ka = A->rank();
@@ -792,16 +827,17 @@ void addmul( Block* C, double alpha, const Block* A, const Block* B, double eps 
 }
 
 // B <- L^-1 B, L (t,t) unit lower, B (t,s).
-void trsm_ll( const Block* L, Block* B, double eps ) {
+template <class Elt>
+void trsm_ll( const BlockT<Elt>* L, BlockT<Elt>* B, double eps ) {
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
          if ( B->rank() > 0 ) {
-            trsm_ll_dense( L, B->U.data(), B->nr, B->rank() );
+            in_double( B->U, [&]( Mat& W ) { trsm_ll_dense( L, W.data(), B->nr, B->rank() ); } );
          }
          break;
       case BType::D:
-         trsm_ll_dense( L, B->D.data(), B->nr, B->nc );
+         in_double( B->D, [&]( Mat& W ) { trsm_ll_dense( L, W.data(), B->nr, B->nc ); } );
          break;
       case BType::H: {
          auto col = [&]( int j ) {
@@ -816,18 +852,19 @@ void trsm_ll( const Block* L, Block* B, double eps ) {
 }
 
 // B <- B U^-1, U (s,s) upper, B (t,s).
-void trsm_ur( const Block* U, Block* B, double eps ) {
+template <class Elt>
+void trsm_ur( const BlockT<Elt>* U, BlockT<Elt>* B, double eps ) {
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
          if ( B->rank() > 0 ) {
             Mat Y = transpose( B->V );  // k x nc
             trsm_ur_dense( U, Y.data(), Y.m, Y.m );
-            B->V = transpose( Y );
+            store( B->V, transpose( Y ) );
          }
          break;
       case BType::D:
-         trsm_ur_dense( U, B->D.data(), B->nr, B->nr );
+         in_double( B->D, [&]( Mat& W ) { trsm_ur_dense( U, W.data(), B->nr, B->nr ); } );
          break;
       case BType::H: {
          auto row = [&]( int i ) {
@@ -871,10 +908,11 @@ void getrf_nopiv( Mat& A ) {
    g_piv_max = std::max( g_piv_max, pmax );
 }
 
-void hlu_block( Block* A, double eps ) {
+template <class Elt>
+void hlu_block( BlockT<Elt>* A, double eps ) {
    flush( A, eps );
    if ( A->type == BType::D ) {
-      getrf_nopiv( A->D );
+      in_double( A->D, []( Mat& W ) { getrf_nopiv( W ); } );
       return;
    }
    if ( A->type != BType::H ) {
@@ -889,9 +927,13 @@ void hlu_block( Block* A, double eps ) {
 
 }  // namespace
 
-void HMatrix::set_fork( int leaves ) { g_fork_leaves = std::max( 1, leaves ); }
+template <class Elt>
+void HMatrixT<Elt>::set_fork( int leaves ) {
+   g_fork_leaves = std::max( 1, leaves );
+}
 
-std::string HMatrix::profile( bool reset ) {
+template <class Elt>
+std::string HMatrixT<Elt>::profile( bool reset ) {
    std::string s;
    for ( int i = 0; i < kNSites; ++i ) {
       char buf[ 96 ];
@@ -906,7 +948,8 @@ std::string HMatrix::profile( bool reset ) {
    return s;
 }
 
-double HMatrix::lu( double eps ) {
+template <class Elt>
+double HMatrixT<Elt>::lu( double eps ) {
    // Fork for blocks of at least g_fork_leaves x g_fork_leaves leaf-cluster sizes.
    const double leafdofs = 3.0 * ct_->c[ ct_->leaves[ 0 ] ].n;
    g_fork_min = ( g_fork_leaves * leafdofs ) * ( g_fork_leaves * leafdofs );
@@ -935,7 +978,8 @@ double HMatrix::lu( double eps ) {
    return g_piv_max > 0 ? g_piv_min / g_piv_max : 0;
 }
 
-void HMatrix::add_rank1( double gamma, const double* u, const double* v ) {
+template <class Elt>
+void HMatrixT<Elt>::add_rank1( double gamma, const double* u, const double* v ) {
    parallel_for( long( leaves_.size() ), [&]( long i, int ) {
       Block* b = leaves_[ i ];
       const double* ur = u + b->r0;
@@ -957,16 +1001,20 @@ void HMatrix::add_rank1( double gamma, const double* u, const double* v ) {
          for ( int r = 0; r < b->nc; ++r ) {
             Vn( r, k ) = vc[ r ];
          }
-         b->U = std::move( Un );
-         b->V = std::move( Vn );
+         store( b->U, std::move( Un ) );
+         store( b->V, std::move( Vn ) );
       }
    } );
 }
 
-void HMatrix::lu_solve( double* X, int ldx, int p ) const {
+template <class Elt>
+void HMatrixT<Elt>::lu_solve( double* X, int ldx, int p ) const {
    // All p columns at once, so that each block is read once per solve (block-row parallel inside).
    trsm_ll_dense( root_.get(), X, ldx, p );
    trsm_ul_dense( root_.get(), X, ldx, p );
 }
+
+template class HMatrixT<double>;
+template class HMatrixT<float>;
 
 }  // namespace bh

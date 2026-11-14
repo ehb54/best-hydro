@@ -1,5 +1,5 @@
        subroutine input(infnm,iarea,truearea,TRUEVOL,cg,
-     $ IVISCO,ICOV,MW,WM,IHM,HEPS,IHLU)
+     $ IVISCO,ICOV,MW,WM,IHM,HEPS,IHLU,IHS)
 
 c      This subroutine reads a triangulation input file.  Only the number of triangles and the vertex 
 c      coordinates of each triangle are used as input by the BEST program. The user should change this 
@@ -18,7 +18,8 @@ c      The vertex coordinate arrays are filled in common: v1,v2,v3.
 c      The incenter array, x, and the area array are calculated elsewhere.
 c      ihm = solver: 1 H-matrix (-hm), -1 dense (-dn), 0 chosen by the number of triangles.
 c      heps = H-matrix accuracy (-he, default 1e-4); ihlu = 1: direct H-LU instead of GMRES (-hlu).
-c      E. H. Brookes 11/13/2026: -hm, -dn, -he, -hlu.
+c      ihs = 1: the H-matrix solver stores its blocks in single precision (-hs).
+c      E. H. Brookes 11/13/2026: -hm, -dn, -he, -hlu.  11/14/2026: -hs.
 
        character*80 inline,infnm,outfnm2,infnm3,arg
 
@@ -27,7 +28,7 @@ c      E. H. Brookes 11/13/2026: -hm, -dn, -he, -hlu.
        if(narg.lt.2) then
        print *,
      $ 'Usage : best -f input_filename [-na] [-p] [-v] [-vc] [-mw]',
-     $ ' [-hm | -dn] [-he eps] [-hlu]'
+     $ ' [-hm | -dn] [-he eps] [-hlu] [-hs]'
        stop
        endif
 
@@ -39,6 +40,7 @@ c      E. H. Brookes 11/13/2026: -hm, -dn, -he, -hlu.
        IHM = 0
        HEPS = 1.0E-4
        IHLU = 0
+       IHS = 0
        DO K = 1,NARG
        CALL GETARG(K,ARG)
        IF(ARG(1:2).EQ.'-f') THEN
@@ -58,6 +60,7 @@ c      E. H. Brookes 11/13/2026: -hm, -dn, -he, -hlu.
        IF (ARG(1:3).EQ.'-hm') IHM = 1
        IF (ARG(1:3).EQ.'-dn') IHM = -1
        IF (ARG(1:4).EQ.'-hlu') IHLU = 1
+       IF (ARG(1:3).EQ.'-hs') IHS = 1
        IF (ARG(1:3).EQ.'-he') THEN
        CALL GETARG(K+1,ARG)
        READ(ARG,*) HEPS

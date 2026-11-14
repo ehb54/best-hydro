@@ -23,13 +23,14 @@ constexpr int kKC = 256, kMC = 128, kNC = 1024;  // cache blocks
 
 thread_local std::vector<double> t_pack_a, t_pack_b;
 
-// op(A)[ i0 .. i0 + mc, l0 .. l0 + kc ) into strips of kMR rows: strip s, then l, then i.
-void pack_a( char ta, const double* A, int lda, int i0, int mc, int l0, int kc, double* p ) {
+// op(A)[ i0 .. i0 + mc, l0 .. l0 + kc ) into strips of kMR rows: strip s, then l, then i (in double).
+template <class TS>
+void pack_a( char ta, const TS* A, int lda, int i0, int mc, int l0, int kc, double* p ) {
    for ( int s = 0; s < mc; s += kMR ) {
       const int mr = std::min( kMR, mc - s );
       if ( ta == 'N' ) {
          for ( int l = 0; l < kc; ++l, p += kMR ) {
-            const double* a = A + size_t( l0 + l ) * lda + i0 + s;
+            const TS* a = A + size_t( l0 + l ) * lda + i0 + s;
             int i = 0;
             for ( ; i < mr; ++i ) {
                p[ i ] = a[ i ];
@@ -52,8 +53,9 @@ void pack_a( char ta, const double* A, int lda, int i0, int mc, int l0, int kc, 
    }
 }
 
-// op(B)[ l0 .. l0 + kc, j0 .. j0 + nc ) into strips of kNR columns: strip s, then l, then j.
-void pack_b( char tb, const double* B, int ldb, int l0, int kc, int j0, int nc, double* p ) {
+// op(B)[ l0 .. l0 + kc, j0 .. j0 + nc ) into strips of kNR columns: strip s, then l, then j (in double).
+template <class TS>
+void pack_b( char tb, const TS* B, int ldb, int l0, int kc, int j0, int nc, double* p ) {
    for ( int s = 0; s < nc; s += kNR ) {
       const int nr = std::min( kNR, nc - s );
       for ( int l = 0; l < kc; ++l, p += kNR ) {
@@ -63,7 +65,7 @@ void pack_b( char tb, const double* B, int ldb, int l0, int kc, int j0, int nc, 
                p[ j ] = B[ size_t( j0 + s + j ) * ldb + l0 + l ];
             }
          } else {
-            const double* b = B + size_t( l0 + l ) * ldb + j0 + s;
+            const TS* b = B + size_t( l0 + l ) * ldb + j0 + s;
             for ( ; j < nr; ++j ) {
                p[ j ] = b[ j ];
             }
@@ -89,6 +91,15 @@ typedef double v4du __attribute__( ( vector_size( 32 ), aligned( 8 ) ) );
 
 BH_INLINE v4d load4( const double* p ) { return *reinterpret_cast<const v4du*>( p ); }
 BH_INLINE void store4( double* p, v4d v ) { *reinterpret_cast<v4du*>( p ) = v; }
+// The same for four floats, converted to and from double (vcvtps2pd and vcvtpd2ps with AVX).
+typedef float v4fu __attribute__( ( vector_size( 16 ), aligned( 4 ) ) );
+BH_INLINE v4d load4( const float* p ) {
+   const v4fu f = *reinterpret_cast<const v4fu*>( p );
+   return v4d{ f[ 0 ], f[ 1 ], f[ 2 ], f[ 3 ] };
+}
+BH_INLINE void store4( float* p, v4d v ) {
+   *reinterpret_cast<v4fu*>( p ) = v4fu{ float( v[ 0 ] ), float( v[ 1 ] ), float( v[ 2 ] ), float( v[ 3 ] ) };
+}
 BH_INLINE v4d bcast( double x ) { return v4d{ x, x, x, x }; }
 BH_INLINE double hsum( v4d v ) { return ( v[ 0 ] + v[ 1 ] ) + ( v[ 2 ] + v[ 3 ] ); }
 
@@ -97,7 +108,7 @@ BH_INLINE double hsum( v4d v ) { return ( v[ 0 ] + v[ 1 ] ) + ( v[ 2 ] + v[ 3 ] 
 #define BH_KERNEL_8X4( kc, a, as, b )                                                                     \
    v4d c00 = { 0, 0, 0, 0 }, c01 = c00, c10 = c00, c11 = c00, c20 = c00, c21 = c00, c30 = c00, c31 = c00; \
    for ( int l = 0; l < ( kc ); ++l ) {                                                                   \
-      const double* al = ( a ) + size_t( l ) * ( as );                                                    \
+      const auto* al = ( a ) + size_t( l ) * ( as );                                                      \
       const double* bl = ( b ) + size_t( l ) * kNR;                                                       \
       const v4d a0 = load4( al ), a1 = load4( al + 4 );                                                   \
       v4d bj = bcast( bl[ 0 ] );                                                                          \
@@ -116,10 +127,11 @@ BH_INLINE double hsum( v4d v ) { return ( v[ 0 ] + v[ 1 ] ) + ( v[ 2 ] + v[ 3 ] 
    const v4d acc[ kNR ][ 2 ] = { { c00, c01 }, { c10, c11 }, { c20, c21 }, { c30, c31 } };
 
 // C[ 0 .. mr, 0 .. nr ) += alpha acc.
-BH_INLINE void add_tile( const v4d ( &acc )[ kNR ][ 2 ], int mr, int nr, double alpha, double* C, int ldc ) {
+template <class TC>
+BH_INLINE void add_tile( const v4d ( &acc )[ kNR ][ 2 ], int mr, int nr, double alpha, TC* C, int ldc ) {
    const v4d va = bcast( alpha );
    for ( int j = 0; j < nr; ++j ) {
-      double* c = C + size_t( j ) * ldc;
+      TC* c = C + size_t( j ) * ldc;
       if ( mr == kMR ) {
          store4( c, load4( c ) + va * acc[ j ][ 0 ] );
          store4( c + 4, load4( c + 4 ) + va * acc[ j ][ 1 ] );
@@ -132,8 +144,8 @@ BH_INLINE void add_tile( const v4d ( &acc )[ kNR ][ 2 ], int mr, int nr, double 
 }
 
 // C[ mc x nc ] += alpha (packed A) (packed B).
-BH_INLINE void macro_body( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, double* C,
-                           int ldc ) {
+template <class TC>
+BH_INLINE void macro_body( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, TC* C, int ldc ) {
    for ( int jb = 0; jb < nc; jb += kNR ) {
       const int nr = std::min( kNR, nc - jb );
       const double* bp = pb + size_t( jb / kNR ) * kc * kNR;
@@ -149,8 +161,9 @@ BH_INLINE void macro_body( int mc, int nc, int kc, double alpha, const double* p
 // C[ m x nj ] += alpha op(A) op(B)[ :, 0 .. nj ) for nj <= kNR columns, A not packed.  bp: op(B)
 // packed as one kNR-column strip (pack_b).  'N': kMR-row strips of A against all nj columns at
 // once; 'T': for each column of A, its dot products with the nj columns at once.
-BH_INLINE void thin_body( char ta, int m, int nj, int k, double alpha, const double* A, int lda, const double* bp,
-                          double* C, int ldc ) {
+template <class TA, class TC>
+BH_INLINE void thin_body( char ta, int m, int nj, int k, double alpha, const TA* A, int lda, const double* bp, TC* C,
+                          int ldc ) {
    if ( ta == 'N' ) {
       int ib = 0;
       for ( ; ib + kMR <= m; ib += kMR ) {
@@ -168,7 +181,7 @@ BH_INLINE void thin_body( char ta, int m, int nj, int k, double alpha, const dou
       }
    } else {
       for ( int i = 0; i < m; ++i ) {
-         const double* a = A + size_t( i ) * lda;
+         const TA* a = A + size_t( i ) * lda;
          v4d s0 = { 0, 0, 0, 0 }, s1 = s0, s2 = s0, s3 = s0;
          int l = 0;
          for ( ; l + 4 <= k; l += 4 ) {
@@ -189,24 +202,24 @@ BH_INLINE void thin_body( char ta, int m, int nj, int k, double alpha, const dou
    }
 }
 
-using MacroFn = void ( * )( int, int, int, double, const double*, const double*, double*, int );
-using ThinFn = void ( * )( char, int, int, int, double, const double*, int, const double*, double*, int );
-
-void macro_base( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, double* C, int ldc ) {
+template <class TC>
+void macro_base( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, TC* C, int ldc ) {
    macro_body( mc, nc, kc, alpha, pa, pb, C, ldc );
 }
-void thin_base( char ta, int m, int nj, int k, double alpha, const double* A, int lda, const double* bp, double* C,
-                int ldc ) {
+template <class TA, class TC>
+void thin_base( char ta, int m, int nj, int k, double alpha, const TA* A, int lda, const double* bp, TC* C, int ldc ) {
    thin_body( ta, m, nj, k, alpha, A, lda, bp, C, ldc );
 }
 
 #if defined( __x86_64__ ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
+template <class TC>
 __attribute__( ( target( "avx2,fma" ) ) ) void macro_avx2( int mc, int nc, int kc, double alpha, const double* pa,
-                                                           const double* pb, double* C, int ldc ) {
+                                                           const double* pb, TC* C, int ldc ) {
    macro_body( mc, nc, kc, alpha, pa, pb, C, ldc );
 }
-__attribute__( ( target( "avx2,fma" ) ) ) void thin_avx2( char ta, int m, int nj, int k, double alpha, const double* A,
-                                                          int lda, const double* bp, double* C, int ldc ) {
+template <class TA, class TC>
+__attribute__( ( target( "avx2,fma" ) ) ) void thin_avx2( char ta, int m, int nj, int k, double alpha, const TA* A,
+                                                          int lda, const double* bp, TC* C, int ldc ) {
    thin_body( ta, m, nj, k, alpha, A, lda, bp, C, ldc );
 }
 bool has_avx2() {
@@ -214,25 +227,38 @@ bool has_avx2() {
    return __builtin_cpu_supports( "avx2" ) && __builtin_cpu_supports( "fma" );
 }
 const bool g_avx2 = has_avx2();
-const MacroFn g_macro = g_avx2 ? macro_avx2 : macro_base;
-const ThinFn g_thin = g_avx2 ? thin_avx2 : thin_base;
+template <class TC>
+void macro( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, TC* C, int ldc ) {
+   ( g_avx2 ? macro_avx2<TC> : macro_base<TC> )( mc, nc, kc, alpha, pa, pb, C, ldc );
+}
+template <class TA, class TC>
+void thin( char ta, int m, int nj, int k, double alpha, const TA* A, int lda, const double* bp, TC* C, int ldc ) {
+   ( g_avx2 ? thin_avx2<TA, TC> : thin_base<TA, TC> )( ta, m, nj, k, alpha, A, lda, bp, C, ldc );
+}
 #else
-const MacroFn g_macro = macro_base;
-const ThinFn g_thin = thin_base;
+template <class TC>
+void macro( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, TC* C, int ldc ) {
+   macro_base( mc, nc, kc, alpha, pa, pb, C, ldc );
+}
+template <class TA, class TC>
+void thin( char ta, int m, int nj, int k, double alpha, const TA* A, int lda, const double* bp, TC* C, int ldc ) {
+   thin_base( ta, m, nj, k, alpha, A, lda, bp, C, ldc );
+}
 #endif
 
 }  // namespace
 
-void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A, int lda, const double* B, int ldb,
-           double beta, double* C, int ldc ) {
+template <class TA, class TB, class TC>
+void gemm( char ta, char tb, int m, int n, int k, double alpha, const TA* A, int lda, const TB* B, int ldb, double beta,
+           TC* C, int ldc ) {
    if ( m <= 0 || n <= 0 ) {
       return;
    }
    if ( beta != 1.0 ) {
       for ( int j = 0; j < n; ++j ) {
-         double* c = C + size_t( j ) * ldc;
+         TC* c = C + size_t( j ) * ldc;
          if ( beta == 0.0 ) {
-            std::fill( c, c + m, 0.0 );
+            std::fill( c, c + m, TC( 0 ) );
          } else {
             for ( int i = 0; i < m; ++i ) {
                c[ i ] *= beta;
@@ -253,7 +279,7 @@ void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A,
       for ( int j0 = 0; j0 < n; j0 += kNR ) {
          const int nj = std::min( kNR, n - j0 );
          pack_b( tb, B, ldb, 0, k, j0, nj, pb.data() );
-         g_thin( ta, m, nj, k, alpha, A, lda, pb.data(), C + size_t( j0 ) * ldc, ldc );
+         thin( ta, m, nj, k, alpha, A, lda, pb.data(), C + size_t( j0 ) * ldc, ldc );
       }
       return;
    }
@@ -273,7 +299,7 @@ void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A,
                pa.resize( na );
             }
             pack_a( ta, A, lda, ic, mc, pc, kc, pa.data() );
-            g_macro( mc, nc, kc, alpha, pa.data(), pb.data(), C + size_t( jc ) * ldc + ic, ldc );
+            macro( mc, nc, kc, alpha, pa.data(), pb.data(), C + size_t( jc ) * ldc + ic, ldc );
          }
       }
    }
@@ -287,7 +313,8 @@ namespace {
 constexpr int kTB = 64;
 }
 
-void trsm_llnu( int m, int n, const double* L, int ldl, double* B, int ldb ) {
+template <class TT>
+void trsm_llnu( int m, int n, const TT* L, int ldl, double* B, int ldb ) {
    for ( int kb = 0; kb < m; kb += kTB ) {
       const int nb = std::min( kTB, m - kb );
       for ( int j = 0; j < n; ++j ) {
@@ -297,7 +324,7 @@ void trsm_llnu( int m, int n, const double* L, int ldl, double* B, int ldb ) {
             if ( x == 0.0 ) {
                continue;
             }
-            const double* l = L + size_t( kk ) * ldl;
+            const TT* l = L + size_t( kk ) * ldl;
             for ( int i = kk + 1; i < kb + nb; ++i ) {
                b[ i ] -= l[ i ] * x;
             }
@@ -310,14 +337,15 @@ void trsm_llnu( int m, int n, const double* L, int ldl, double* B, int ldb ) {
    }
 }
 
-void trsm_lunn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
+template <class TT>
+void trsm_lunn( int m, int n, const TT* U, int ldu, double* B, int ldb ) {
    const int nblk = ( m + kTB - 1 ) / kTB;
    for ( int bk = nblk - 1; bk >= 0; --bk ) {
       const int kb = bk * kTB, nb = std::min( kTB, m - kb );
       for ( int j = 0; j < n; ++j ) {
          double* b = B + size_t( j ) * ldb;
          for ( int kk = kb + nb - 1; kk >= kb; --kk ) {
-            const double* u = U + size_t( kk ) * ldu;
+            const TT* u = U + size_t( kk ) * ldu;
             b[ kk ] /= u[ kk ];
             const double x = b[ kk ];
             if ( x == 0.0 ) {
@@ -334,7 +362,8 @@ void trsm_lunn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
    }
 }
 
-void trsm_runn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
+template <class TT>
+void trsm_runn( int m, int n, const TT* U, int ldu, double* B, int ldb ) {
    for ( int jb = 0; jb < n; jb += kTB ) {
       const int nb = std::min( kTB, n - jb );
       if ( jb > 0 ) {
@@ -342,7 +371,7 @@ void trsm_runn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
       }
       for ( int j = jb; j < jb + nb; ++j ) {
          double* bj = B + size_t( j ) * ldb;
-         const double* u = U + size_t( j ) * ldu;
+         const TT* u = U + size_t( j ) * ldu;
          for ( int l = jb; l < j; ++l ) {
             const double ulj = u[ l ];
             if ( ulj == 0.0 ) {
@@ -360,6 +389,26 @@ void trsm_runn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
       }
    }
 }
+
+// Every combination of double and float operands, and the triangles in either.
+#define BH_GEMM( TA, TB, TC ) \
+   template void gemm<TA, TB, TC>( char, char, int, int, int, double, const TA*, int, const TB*, int, double, TC*, \
+                                   int );
+BH_GEMM( double, double, double )
+BH_GEMM( double, double, float )
+BH_GEMM( double, float, double )
+BH_GEMM( double, float, float )
+BH_GEMM( float, double, double )
+BH_GEMM( float, double, float )
+BH_GEMM( float, float, double )
+BH_GEMM( float, float, float )
+#undef BH_GEMM
+template void trsm_llnu<double>( int, int, const double*, int, double*, int );
+template void trsm_llnu<float>( int, int, const float*, int, double*, int );
+template void trsm_lunn<double>( int, int, const double*, int, double*, int );
+template void trsm_lunn<float>( int, int, const float*, int, double*, int );
+template void trsm_runn<double>( int, int, const double*, int, double*, int );
+template void trsm_runn<float>( int, int, const float*, int, double*, int );
 
 // ---------------------------------------------------------------------------------------------
 // Householder QR and one-sided Jacobi SVD.

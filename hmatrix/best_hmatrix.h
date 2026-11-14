@@ -6,7 +6,8 @@
  * routines that matches them bit for bit), compresses the blocks of GR between well-separated
  * groups of triangles to low rank (adaptive cross approximation, then QR and SVD) to a relative
  * accuracy eps, and solves with GMRES preconditioned by a coarse H-LU factorization, or with a
- * direct H-LU factorization.  Memory and time grow about as N log N.
+ * direct H-LU factorization.  Memory and time grow about as N log N.  The blocks can be stored
+ * in single precision, in about half the memory; the arithmetic stays in double precision.
  *
  * BEST calls it from best/besolve.f90 through bind(C).  There is one solver per process.
  * Vectors and indices are in BEST's order: unknown 3 n + a (counting from 0) is component a of
@@ -45,9 +46,10 @@ double bhm_diag_mean( void );
 
 /* Builds the H-matrix of GR + gdef xmu xmu^T at accuracy eps and prepares the solves: with
  * direct = 0 a preconditioner for GMRES (an H-LU factorization at eps_pre, with the near field
- * compressed too), with direct = 1 the H-LU factorization at eps.  xmu has 3n entries.  Returns
- * 0, or nonzero after queuing a message (for example when the memory needed is not available). */
-int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu );
+ * compressed too), with direct = 1 the H-LU factorization at eps.  xmu has 3n entries.  With
+ * single = 1 the H-matrix and its factors are stored in single precision.  Returns 0, or nonzero
+ * after queuing a message (for example when the memory needed is not available). */
+int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single );
 
 /* Solves for nrhs right-hand sides at once: b is 3n x nrhs, column-major, and holds the
  * solutions on return.  Returns 0, or nonzero after queuing a message (GMRES did not converge). */

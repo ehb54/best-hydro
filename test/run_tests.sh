@@ -66,7 +66,8 @@ fi
 # BEST_HMATRIX_CHECK set, BEST also fills GR densely and logs whether the
 # solver's entries are TGETGR's bit for bit.  The results must agree with the
 # dense ones above to 2e-5 (or the last digit printed): GMRES with -v, and the
-# direct H-LU with -vc.
+# direct H-LU with -vc; and in single precision (-hs), GMRES with -vc and the
+# direct H-LU with -v.
 d=$work/best-hm; mkdir -p "$d"; cd "$d" || exit 1
 cp "$root/examples/best/2eu7_02562" .
 BEST_HMATRIX_CHECK=1 "$bin/best" -f 2eu7_02562 -v -mw 30000 -hm > best_hm.out 2>&1
@@ -88,6 +89,21 @@ else
       ok "best -hm -hlu: 2eu7_02562 -vc -mw 30000 agrees with the dense solver"
    else
       bad "best -hm -hlu: 2eu7_02562 -vc -mw 30000 should agree with the dense solver (see $d)"
+   fi
+   mkdir -p hs-gmres hs-hlu
+   cp 2eu7_02562 hs-gmres/
+   cp 2eu7_02562 hs-hlu/
+   if ( cd hs-gmres && "$bin/best" -f 2eu7_02562 -vc -mw 30000 -hm -hs > best.out 2>&1 ) \
+      && perl "$t/check_best_pair.pl" "$work/best/2eu7_02562vcm.be" hs-gmres/2eu7_02562vcm.be 2e-5; then
+      ok "best -hm -hs: 2eu7_02562 -vc -mw 30000 agrees with the dense solver"
+   else
+      bad "best -hm -hs: 2eu7_02562 -vc -mw 30000 should agree with the dense solver (see $d/hs-gmres)"
+   fi
+   if ( cd hs-hlu && "$bin/best" -f 2eu7_02562 -v -mw 30000 -hm -hlu -hs > best.out 2>&1 ) \
+      && perl "$t/check_best_pair.pl" "$work/best/2eu7_02562vm.be" hs-hlu/2eu7_02562vm.be 2e-5; then
+      ok "best -hm -hlu -hs: 2eu7_02562 -v -mw 30000 agrees with the dense solver"
+   else
+      bad "best -hm -hlu -hs: 2eu7_02562 -v -mw 30000 should agree with the dense solver (see $d/hs-hlu)"
    fi
 fi
 

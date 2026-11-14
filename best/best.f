@@ -139,6 +139,8 @@ C	It compresses GR to a relative accuracy eps (-he, default 1e-4) and solves by 
 C	an H-LU preconditioner, or by a direct H-LU factorization (-hlu); memory and time grow
 C	about as NAR*log(NAR).  The results agree with the dense ones to about 1e-5.  -dn keeps
 C	the dense solver at any size.
+C	11/14/2026 E. H. Brookes: With -hs the H-matrix solver stores its blocks in single
+C	precision, in about half the memory.  Its arithmetic stays in double precision.
 	
 
 c      ARRAY DIMENSIONS
@@ -178,7 +180,7 @@ c      Change the version number here.
 C      I. INPUT SURFACE TRIANGULATION/CENTROID SHIFT
 	
        call input(infnm,iarea,truearea,TRUEVOL,cg,
-     $ IVISCO,ICOV,MW,WM,IHM,HEPS,IHLU)
+     $ IVISCO,ICOV,MW,WM,IHM,HEPS,IHLU,IHS)
 
 c      read number of surface patches
 
@@ -317,7 +319,8 @@ c      AREA CORRECTION
 c      With the H-matrix solver, HMPREP does all of II and III without forming GR.
 
        IF(IHM.EQ.1) THEN
-       CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU,IVISCO)
+       CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU,IVISCO,
+     $ IHS)
        ELSE
 
 c      II. CONSTRUCTION OF THE SUPER "G" MATRIX, GR

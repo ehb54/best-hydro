@@ -6,6 +6,10 @@
 // clusters is a dense leaf (D), anything else is split 2 x 2 (H).  Low-rank blocks are filled by
 // adaptive cross approximation on BEST's own entries and recompressed by QR + SVD, keeping the
 // singular values above eps times the block's largest.
+//
+// The blocks are stored in double (HMatrix) or in single precision (HMatrixF).  Either way the
+// arithmetic is in double: products sum in double, and truncations and the factorization of the
+// dense diagonal leaves work on double copies.  The pending updates of the H-LU stay in double.
 #pragma once
 
 #include <memory>
@@ -19,18 +23,19 @@ namespace bh {
 
 enum class BType { H, R, D };
 
-struct Block {
+template <class T>
+struct BlockT {
    int r0 = 0, nr = 0, c0 = 0, nc = 0;  // rows and columns (unknowns, tree order)
    int t = -1, s = -1;                  // row and column clusters
    int level = 0;
    BType type = BType::D;
-   std::unique_ptr<Block> ch[ 4 ];      // H: (t0,s0) (t0,s1) (t1,s0) (t1,s1)
-   Mat D;                               // D: nr x nc
-   Mat U, V;                            // R: U nr x k, V nc x k; the block is U V^T
+   std::unique_ptr<BlockT> ch[ 4 ];     // H: (t0,s0) (t0,s1) (t1,s0) (t1,s1)
+   MatT<T> D;                           // D: nr x nc
+   MatT<T> U, V;                        // R: U nr x k, V nc x k; the block is U V^T
    Mat Pu, Pv;                          // H during the H-LU: a pending update Pu Pv^T not yet pushed
                                         // down to the children (the block is children + Pu Pv^T)
    int rank() const { return U.n; }
-   Block* c( int i, int j ) const { return ch[ 2 * i + j ].get(); }
+   BlockT* c( int i, int j ) const { return ch[ 2 * i + j ].get(); }
 };
 
 struct HOptions {
@@ -51,14 +56,16 @@ struct HStats {
    double bytes() const { return bytes_dense + bytes_lowrank; }
 };
 
-class HMatrix {
+template <class T>
+class HMatrixT {
  public:
-   HMatrix( const ClusterTree& ct, std::unique_ptr<Block> root );
+   using Block = BlockT<T>;
+   HMatrixT( const ClusterTree& ct, std::unique_ptr<Block> root );
    // Builds the block tree and fills it from the kernel.  kernel_calls counts 3x3 blocks evaluated.
-   static HMatrix build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls );
+   static HMatrixT build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls );
    // A deep copy; with eps > 0 every low-rank block is truncated again at eps, and with near also
    // every dense leaf off the diagonal becomes low-rank at eps where that takes less memory.
-   HMatrix copy( double eps, bool near = false ) const;
+   HMatrixT copy( double eps, bool near = false ) const;
 
    const ClusterTree& tree() const { return *ct_; }
    Block* root() const { return root_.get(); }
@@ -89,5 +96,9 @@ class HMatrix {
    std::vector<Block*> leaves_;
    std::vector<std::vector<int>> rows_;  // per leaf cluster: the leaves (indices) covering its rows
 };
+
+using Block = BlockT<double>;
+using HMatrix = HMatrixT<double>;
+using HMatrixF = HMatrixT<float>;
 
 }  // namespace bh

@@ -11,17 +11,24 @@
 
 namespace bh {
 
-// C = alpha op(A) op(B) + beta C, as BLAS dgemm; op is 'N' or 'T'.  op(A) is m x k, op(B) k x n.
-void gemm( char ta, char tb, int m, int n, int k, double alpha, const double* A, int lda, const double* B,
-           int ldb, double beta, double* C, int ldc );
+// C = alpha op(A) op(B) + beta C, as BLAS dgemm; op is 'N' or 'T'.  op(A) is m x k, op(B) k x n.  A, B
+// and C are each double or float (the H-matrix in single precision); the products are summed in
+// double either way, and a float C is rounded once per block of 256 terms.
+template <class TA, class TB, class TC>
+void gemm( char ta, char tb, int m, int n, int k, double alpha, const TA* A, int lda, const TB* B, int ldb,
+           double beta, TC* C, int ldc );
 
 // Triangular solves, as BLAS dtrsm with alpha = 1, in the three forms the solver uses:
 //   trsm_llnu: B (m x n) <- L^-1 B, L m x m unit lower triangular;
 //   trsm_lunn: B (m x n) <- U^-1 B, U m x m upper triangular;
 //   trsm_runn: B (m x n) <- B U^-1, U n x n upper triangular.
-void trsm_llnu( int m, int n, const double* L, int ldl, double* B, int ldb );
-void trsm_lunn( int m, int n, const double* U, int ldu, double* B, int ldb );
-void trsm_runn( int m, int n, const double* U, int ldu, double* B, int ldb );
+// The triangle is double or float; B is double.
+template <class TT>
+void trsm_llnu( int m, int n, const TT* L, int ldl, double* B, int ldb );
+template <class TT>
+void trsm_lunn( int m, int n, const TT* U, int ldu, double* B, int ldb );
+template <class TT>
+void trsm_runn( int m, int n, const TT* U, int ldu, double* B, int ldb );
 
 // Householder QR of A (m x k, leading dimension m), LAPACK's compact form: R in the upper
 // triangle of the first q = min(m, k) rows, the reflectors below the diagonal, their scalars in

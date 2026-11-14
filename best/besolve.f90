@@ -10,7 +10,8 @@
 ! of triangles to low rank at a relative accuracy eps (-he, default 1e-4), and
 ! solves by GMRES with a coarse H-LU preconditioner, or with a direct H-LU
 ! factorization (-hlu).  Its memory grows about as N log N instead of 72 N^2
-! bytes.  BEST's results then agree with the dense ones to about 1e-5.
+! bytes.  BEST's results then agree with the dense ones to about 1e-5.  With
+! -hs it stores the blocks in single precision, in about half the memory.
 !
 ! Either way DIFCO and VISCO call BESOLV, for several right-hand sides at once.
 !
@@ -67,10 +68,10 @@ module besolve
       real(c_double) function bhm_diag_mean() bind(C, name='bhm_diag_mean')
          import :: c_double
       end function bhm_diag_mean
-      integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu) bind(C, name='bhm_build')
+      integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu, single) bind(C, name='bhm_build')
          import :: c_int, c_double
          real(c_double), value :: eps, eps_pre, gdef
-         integer(c_int), value :: direct
+         integer(c_int), value :: direct, single
          real(c_double), intent(in) :: xmu(*)
       end function bhm_build
       integer(c_int) function bhm_solve(nrhs, b) bind(C, name='bhm_solve')
@@ -140,9 +141,10 @@ contains
    ! the same lines about GR and its deflation as on the dense path, then the
    ! solver's own.  HEPS is the H-matrix accuracy; IHLU = 1 asks for the
    ! direct H-LU solver instead of GMRES; IVISCO = 1 (-v, -vc) has BESOLV solve
-   ! VISCO's strain flows with DIFCO's.
-   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu, ivisco)
-      integer, intent(in) :: nar, ihlu, ivisco
+   ! VISCO's strain flows with DIFCO's; IHS = 1 (-hs) stores the blocks in
+   ! single precision.
+   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu, ivisco, ihs)
+      integer, intent(in) :: nar, ihlu, ivisco, ihs
       real, intent(in) :: afac, cg, heps
       real, intent(in) :: v1(nar,3), v2(nar,3), v3(nar,3), area(nar)
       real, intent(out) :: x(nar,3)
@@ -209,9 +211,10 @@ contains
       else
          write(12,*) 'H-matrix solver, GMRES, eps = ', heps
       end if
+      if (ihs == 1) write(12,*) 'H-matrix stored in single precision (-hs)'
       close(12)
 
-      info = bhm_build(heps, ihlu, epspre, gdef, xmu)
+      info = bhm_build(heps, ihlu, epspre, gdef, xmu, ihs)
       call hmlog()
       if (info /= 0) call hmstop('the H-matrix could not be built')
       deallocate(xmu)
