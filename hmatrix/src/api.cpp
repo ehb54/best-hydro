@@ -37,7 +37,7 @@ const double kEta = 2.0;      // admissibility
 const int kRestart = 30;      // GMRES restart length
 const int kMaxSteps = 500;    // GMRES steps (batched products) per solve
 const double kTolFactor = 0.1;  // GMRES stops at a relative residual of kTolFactor * eps
-const int kForkLeaves = 8;      // the H-LU forks for blocks of at least this many leaf clusters a side
+const int kForkLeaves = 2;      // the H-LU forks for blocks of at least this many leaf clusters a side
 
 std::deque<std::string> g_log;
 
