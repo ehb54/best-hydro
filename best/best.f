@@ -317,7 +317,7 @@ c      AREA CORRECTION
 c      With the H-matrix solver, HMPREP does all of II and III without forming GR.
 
        IF(IHM.EQ.1) THEN
-       CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU)
+       CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU,IVISCO)
        ELSE
 
 c      II. CONSTRUCTION OF THE SUPER "G" MATRIX, GR

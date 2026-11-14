@@ -36,6 +36,14 @@ module besolve
    logical :: hm = .false.
    character(len=80) :: logfile = ' '
 
+   ! With -v or -vc (H-matrix solver only): VISCO first solves for the five strain flows about
+   ! the centroid, STRAIN(X).  BESOLV solves for them already with DIFCO's six flows, in one
+   ! GMRES run of 11 right-hand sides (its time is set by the preconditioner's triangular
+   ! solves, about the same for 11 as for 6), and keeps them: srhs the right-hand sides, ssol
+   ! the solutions.  hmx is X.
+   logical :: hmvisc = .false.
+   real, allocatable :: hmx(:,:), srhs(:,:), ssol(:,:)
+
    interface
       integer(c_int) function bhm_available() bind(C, name='bhm_available')
          import :: c_int
@@ -85,10 +93,35 @@ contains
       integer, intent(in) :: nrhs
       real, intent(inout) :: b(*)
       integer, intent(out) :: info
-      integer :: n
+      integer :: n, nar
+      real, allocatable :: bb(:,:)
 
       if (hm) then
-         info = bhm_solve(nrhs, b)
+         n = 3*size(hmx, 1)
+         nar = size(hmx, 1)
+         if (hmvisc .and. nrhs == 6 .and. .not. allocated(srhs)) then
+            allocate(bb(n, 11), srhs(n, 5), ssol(n, 5))
+            bb(:, 1:6) = reshape(b(1:6*n), [n, 6])
+            call strain(nar, hmx, srhs)
+            bb(:, 7:11) = srhs
+            info = bhm_solve(11, bb)
+            b(1:6*n) = reshape(bb(:, 1:6), [6*n])
+            ssol = bb(:, 7:11)
+            deallocate(bb)
+         else if (nrhs == 5 .and. allocated(ssol)) then
+            if (all(b(1:5*n) == reshape(srhs, [5*n]))) then
+               b(1:5*n) = reshape(ssol, [5*n])
+               info = 0
+               open(12, file=logfile, status='old', position='append')
+               write(12,'(1x,a)') 'solve: the 5 strain flows were solved with the 6 above'
+               close(12)
+            else
+               info = bhm_solve(nrhs, b)
+            end if
+            deallocate(srhs, ssol)
+         else
+            info = bhm_solve(nrhs, b)
+         end if
          call hmlog()
          if (info /= 0) call hmstop('the H-matrix solve failed')
          return
@@ -106,9 +139,10 @@ contains
    ! the dense path.  X receives the incenters (TGETGR's X).  The log gets
    ! the same lines about GR and its deflation as on the dense path, then the
    ! solver's own.  HEPS is the H-matrix accuracy; IHLU = 1 asks for the
-   ! direct H-LU solver instead of GMRES.
-   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu)
-      integer, intent(in) :: nar, ihlu
+   ! direct H-LU solver instead of GMRES; IVISCO = 1 (-v, -vc) has BESOLV solve
+   ! VISCO's strain flows with DIFCO's.
+   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu, ivisco)
+      integer, intent(in) :: nar, ihlu, ivisco
       real, intent(in) :: afac, cg, heps
       real, intent(in) :: v1(nar,3), v2(nar,3), v3(nar,3), area(nar)
       real, intent(out) :: x(nar,3)
@@ -182,6 +216,8 @@ contains
       if (info /= 0) call hmstop('the H-matrix could not be built')
       deallocate(xmu)
       hm = .true.
+      hmvisc = ivisco == 1
+      hmx = x
    end subroutine hmprep
 
    ! Fills GR with TGETGR, as on the dense path, and logs how many of its
