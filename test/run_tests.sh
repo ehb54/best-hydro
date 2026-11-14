@@ -26,6 +26,15 @@ else
    bad "best: 2eu7_02562 -v -mw 30000 (see $d)"
 fi
 
+# BEST: the same mesh, rotated, must give the same results
+perl "$t/permute_mesh.pl" 2eu7_02562 2eu7_rot
+if "$bin/best" -f 2eu7_rot -v -mw 30000 > best_rot.out 2>&1 \
+   && perl "$t/check_best_frame.pl" 2eu7_02562vm.be 2eu7_02562vm.log 2eu7_rotvm.be; then
+   ok "best: 2eu7_02562 rotated gives the same results"
+else
+   bad "best: 2eu7_02562 rotated should give the same results (see $d)"
+fi
+
 # rcoal: the author's test case.  Each mesh is regenerated from the edge
 # fraction recorded in its .his file, and must be closed.  It must also
 # reproduce the author's mesh, unless test/expected_rcoal.txt gives another
