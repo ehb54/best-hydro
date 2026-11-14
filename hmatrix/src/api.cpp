@@ -37,6 +37,7 @@ const double kEta = 2.0;      // admissibility
 const int kRestart = 30;      // GMRES restart length
 const int kMaxSteps = 500;    // GMRES steps (batched products) per solve
 const double kTolFactor = 0.1;  // GMRES stops at a relative residual of kTolFactor * eps
+const int kForkLeaves = 8;      // the H-LU forks for blocks of at least this many leaf clusters a side
 
 std::deque<std::string> g_log;
 
@@ -240,6 +241,8 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
       s.direct = direct != 0;
       s.eps = eps;
       s.tol = env_double( "BEST_HMATRIX_GMRES_TOL", kTolFactor * eps );
+      // The H-LU forks for blocks of at least this many leaf clusters a side.
+      HMatrix::set_fork( int( env_double( "BEST_HMATRIX_FORK", kForkLeaves ) ) );
       double t = now();
       s.ct = build_cluster_tree( s.mesh, s.K->x(), kLeaf );
       say( "cluster tree: depth %d, %zu leaf clusters of %d to %d triangles, %.2f s", s.ct.depth, s.ct.leaves.size(),
@@ -311,8 +314,20 @@ int bhm_solve( int nrhs, double* b ) {
       std::vector<double> Xt( size_t( n3 ) * nrhs );
       const HMatrix& H = *s.H;
       const HMatrix& P = *s.P;
-      Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) { H.matvec( X, ldx, q, Y, ldy ); };
-      Precond M = [&]( double* X, int ldx, int q ) { P.lu_solve( X, ldx, q ); };
+      double ta = 0, tm = 0;
+      int na = 0, nm = 0;
+      Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) {
+         const double t0 = now();
+         H.matvec( X, ldx, q, Y, ldy );
+         ta += now() - t0;
+         na += q;
+      };
+      Precond M = [&]( double* X, int ldx, int q ) {
+         const double t0 = now();
+         P.lu_solve( X, ldx, q );
+         tm += now() - t0;
+         nm += q;
+      };
       const GmresResult r = gmres( n3, nrhs, A, M, Bt.data(), n3, Xt.data(), n3, s.tol, s.restart, s.maxsteps );
       from_tree( s.ct, Xt.data(), nrhs, b );
       int imin = 1 << 30, imax = 0;
@@ -322,8 +337,9 @@ int bhm_solve( int nrhs, double* b ) {
          imax = std::max( imax, r.iters[ c ] );
          worst = std::max( worst, r.relres[ c ] );
       }
-      say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s", nrhs,
-           imin, imax, worst, now() - t );
+      say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s "
+           "(products %.2f s for %d vectors, preconditioner %.2f s for %d)",
+           nrhs, imin, imax, worst, now() - t, ta, na, tm, nm );
       if ( !( worst <= s.tol ) ) {
          say( "error: GMRES did not reach a relative residual of %.0e in %d steps", s.tol, s.maxsteps );
          return 1;

@@ -52,11 +52,12 @@ void parallel_for( long n, F&& body, long chunk = 1 ) {
    } );
 }
 
-// Runs a() and b() and returns when both are done.  When a thread is spare (the fork budget is
-// threads() - 1 extra std::threads in all), a() runs on a new thread while this one runs b();
-// otherwise they run one after the other here.  This is for recursive divide-and-conquer code such
-// as the H-LU, where a parallel_for inside a parallel_for would run serially.  Code run through
-// fork_join must not call parallel_for.
+// Runs a() and b() and returns when both are done, for recursive divide-and-conquer code such as
+// the H-LU.  b() is offered to a second pool of threads()-1 work-stealing threads while this one
+// runs a(); if no thread has taken it by then, this thread runs it too, and if one has, this thread
+// runs other offered tasks until b() is done.  Forking is cheap (no thread is started), so the
+// recursion can fork down to small blocks.  Code run through fork_join must not call parallel_for;
+// a fork_join inside a parallel_for runs a() and b() one after the other.
 void fork_join( const std::function<void()>& a, const std::function<void()>& b );
 
 // The number of fixed blocks of `block` indices that cover [0, n).  Sums taken per block and added in

@@ -1,10 +1,11 @@
 // BEST H-matrix solver: small dense kernels (see dense.h).
 // Copyright (c) 2026 E. H. Brookes.  MIT License; see LICENSE.
 //
-// gemm packs op(A) and op(B) into thread-local panels and runs an 8 x 4 register-blocked kernel.
-// On x86-64 the kernel is compiled twice, for AVX2 with FMA and for the baseline, and the first is
-// used when the processor has both.  Products with few columns (the matrix-vector products) skip
-// the packing.  Compile with -O3 so that the kernels are vectorized.
+// gemm packs op(A) and op(B) into thread-local panels and runs an 8 x 4 register-blocked kernel;
+// products with few columns (the matrix-vector products) do not pack A.  QR is blocked: unblocked
+// panels of 32 columns, then their block reflectors (I - V T V^T) applied by gemm.  On x86-64 the
+// inner kernels are compiled twice, for AVX2 with FMA and for the baseline, and the first is used
+// when the processor has both.  Compile with -O3 so that the kernels are vectorized.
 #include "dense.h"
 
 #include <algorithm>
@@ -74,94 +75,115 @@ void pack_b( char tb, const double* B, int ldb, int l0, int kc, int j0, int nc, 
    }
 }
 
+// Four doubles as one vector (GCC and clang vector extensions): one AVX register in the AVX2
+// clones, two SSE2 registers otherwise.  v4du is the same with 8-byte alignment, for loads and
+// stores at any address.
+// These helpers are always inlined, so the ABI of passing AVX vectors (-Wpsabi) never applies.
+#if defined( __GNUC__ ) && !defined( __clang__ )
+#pragma GCC diagnostic ignored "-Wpsabi"
+#endif
+typedef double v4d __attribute__( ( vector_size( 32 ) ) );
+typedef double v4du __attribute__( ( vector_size( 32 ), aligned( 8 ) ) );
+
+#define BH_INLINE inline __attribute__( ( always_inline ) )
+
+BH_INLINE v4d load4( const double* p ) { return *reinterpret_cast<const v4du*>( p ); }
+BH_INLINE void store4( double* p, v4d v ) { *reinterpret_cast<v4du*>( p ) = v; }
+BH_INLINE v4d bcast( double x ) { return v4d{ x, x, x, x }; }
+BH_INLINE double hsum( v4d v ) { return ( v[ 0 ] + v[ 1 ] ) + ( v[ 2 ] + v[ 3 ] ); }
+
+// The 8 x 4 block acc += sum over l of a(l) b(l)^T: a(l) is 8 doubles at a + l * as, b(l) 4 doubles
+// at b + 4 l.  c00 .. c31: column j, rows 0-3 and 4-7.
+#define BH_KERNEL_8X4( kc, a, as, b )                                                                     \
+   v4d c00 = { 0, 0, 0, 0 }, c01 = c00, c10 = c00, c11 = c00, c20 = c00, c21 = c00, c30 = c00, c31 = c00; \
+   for ( int l = 0; l < ( kc ); ++l ) {                                                                   \
+      const double* al = ( a ) + size_t( l ) * ( as );                                                    \
+      const double* bl = ( b ) + size_t( l ) * kNR;                                                       \
+      const v4d a0 = load4( al ), a1 = load4( al + 4 );                                                   \
+      v4d bj = bcast( bl[ 0 ] );                                                                          \
+      c00 += a0 * bj;                                                                                     \
+      c01 += a1 * bj;                                                                                     \
+      bj = bcast( bl[ 1 ] );                                                                              \
+      c10 += a0 * bj;                                                                                     \
+      c11 += a1 * bj;                                                                                     \
+      bj = bcast( bl[ 2 ] );                                                                              \
+      c20 += a0 * bj;                                                                                     \
+      c21 += a1 * bj;                                                                                     \
+      bj = bcast( bl[ 3 ] );                                                                              \
+      c30 += a0 * bj;                                                                                     \
+      c31 += a1 * bj;                                                                                     \
+   }                                                                                                      \
+   const v4d acc[ kNR ][ 2 ] = { { c00, c01 }, { c10, c11 }, { c20, c21 }, { c30, c31 } };
+
+// C[ 0 .. mr, 0 .. nr ) += alpha acc.
+BH_INLINE void add_tile( const v4d ( &acc )[ kNR ][ 2 ], int mr, int nr, double alpha, double* C, int ldc ) {
+   const v4d va = bcast( alpha );
+   for ( int j = 0; j < nr; ++j ) {
+      double* c = C + size_t( j ) * ldc;
+      if ( mr == kMR ) {
+         store4( c, load4( c ) + va * acc[ j ][ 0 ] );
+         store4( c + 4, load4( c + 4 ) + va * acc[ j ][ 1 ] );
+      } else {
+         for ( int i = 0; i < mr; ++i ) {
+            c[ i ] += alpha * acc[ j ][ i / 4 ][ i % 4 ];
+         }
+      }
+   }
+}
+
 // C[ mc x nc ] += alpha (packed A) (packed B).
-inline __attribute__( ( always_inline ) ) void macro_body( int mc, int nc, int kc, double alpha, const double* pa,
-                                                            const double* pb, double* C, int ldc ) {
+BH_INLINE void macro_body( int mc, int nc, int kc, double alpha, const double* pa, const double* pb, double* C,
+                           int ldc ) {
    for ( int jb = 0; jb < nc; jb += kNR ) {
       const int nr = std::min( kNR, nc - jb );
       const double* bp = pb + size_t( jb / kNR ) * kc * kNR;
       for ( int ib = 0; ib < mc; ib += kMR ) {
          const int mr = std::min( kMR, mc - ib );
          const double* ap = pa + size_t( ib / kMR ) * kc * kMR;
-         double acc[ kNR ][ kMR ] = {};
-         for ( int l = 0; l < kc; ++l ) {
-            const double* a = ap + size_t( l ) * kMR;
-            const double* b = bp + size_t( l ) * kNR;
-            for ( int j = 0; j < kNR; ++j ) {
-               const double bj = b[ j ];
-               for ( int i = 0; i < kMR; ++i ) {
-                  acc[ j ][ i ] += a[ i ] * bj;
-               }
-            }
-         }
-         for ( int j = 0; j < nr; ++j ) {
-            double* c = C + size_t( jb + j ) * ldc + ib;
-            for ( int i = 0; i < mr; ++i ) {
-               c[ i ] += alpha * acc[ j ][ i ];
-            }
-         }
+         BH_KERNEL_8X4( kc, ap, kMR, bp )
+         add_tile( acc, mr, nr, alpha, C + size_t( jb ) * ldc + ib, ldc );
       }
    }
 }
 
 // C[ m x nj ] += alpha op(A) op(B)[ :, 0 .. nj ) for nj <= kNR columns, A not packed.  bp: op(B)
 // packed as one kNR-column strip (pack_b).  'N': kMR-row strips of A against all nj columns at
-// once; 'T': for each column of A, nj dot products at once.
-inline __attribute__( ( always_inline ) ) void thin_body( char ta, int m, int nj, int k, double alpha, const double* A,
-                                                           int lda, const double* bp, double* C, int ldc ) {
+// once; 'T': for each column of A, its dot products with the nj columns at once.
+BH_INLINE void thin_body( char ta, int m, int nj, int k, double alpha, const double* A, int lda, const double* bp,
+                          double* C, int ldc ) {
    if ( ta == 'N' ) {
       int ib = 0;
       for ( ; ib + kMR <= m; ib += kMR ) {
-         double acc[ kNR ][ kMR ] = {};
-         for ( int l = 0; l < k; ++l ) {
-            const double* a = A + size_t( l ) * lda + ib;
-            const double* b = bp + size_t( l ) * kNR;
-            for ( int j = 0; j < kNR; ++j ) {
-               const double bj = b[ j ];
-               for ( int i = 0; i < kMR; ++i ) {
-                  acc[ j ][ i ] += a[ i ] * bj;
-               }
-            }
-         }
-         for ( int j = 0; j < nj; ++j ) {
-            double* c = C + size_t( j ) * ldc + ib;
-            for ( int i = 0; i < kMR; ++i ) {
-               c[ i ] += alpha * acc[ j ][ i ];
-            }
-         }
+         BH_KERNEL_8X4( k, A + ib, lda, bp )
+         add_tile( acc, kMR, nj, alpha, C + ib, ldc );
       }
       for ( ; ib < m; ++ib ) {
-         double acc[ kNR ] = {};
+         v4d s = { 0, 0, 0, 0 };
          for ( int l = 0; l < k; ++l ) {
-            const double a = A[ size_t( l ) * lda + ib ];
-            for ( int j = 0; j < kNR; ++j ) {
-               acc[ j ] += a * bp[ size_t( l ) * kNR + j ];
-            }
+            s += bcast( A[ size_t( l ) * lda + ib ] ) * load4( bp + size_t( l ) * kNR );
          }
          for ( int j = 0; j < nj; ++j ) {
-            C[ size_t( j ) * ldc + ib ] += alpha * acc[ j ];
+            C[ size_t( j ) * ldc + ib ] += alpha * s[ j ];
          }
       }
    } else {
       for ( int i = 0; i < m; ++i ) {
          const double* a = A + size_t( i ) * lda;
-         double acc[ kNR ][ 4 ] = {};
+         v4d s0 = { 0, 0, 0, 0 }, s1 = s0, s2 = s0, s3 = s0;
          int l = 0;
          for ( ; l + 4 <= k; l += 4 ) {
             const double* b = bp + size_t( l ) * kNR;
-            for ( int j = 0; j < kNR; ++j ) {
-               for ( int u = 0; u < 4; ++u ) {
-                  acc[ j ][ u ] += a[ l + u ] * b[ u * kNR + j ];
-               }
-            }
+            s0 += bcast( a[ l ] ) * load4( b );
+            s1 += bcast( a[ l + 1 ] ) * load4( b + 4 );
+            s2 += bcast( a[ l + 2 ] ) * load4( b + 8 );
+            s3 += bcast( a[ l + 3 ] ) * load4( b + 12 );
          }
          for ( ; l < k; ++l ) {
-            for ( int j = 0; j < kNR; ++j ) {
-               acc[ j ][ 0 ] += a[ l ] * bp[ size_t( l ) * kNR + j ];
-            }
+            s0 += bcast( a[ l ] ) * load4( bp + size_t( l ) * kNR );
          }
+         const v4d s = ( s0 + s1 ) + ( s2 + s3 );
          for ( int j = 0; j < nj; ++j ) {
-            C[ size_t( j ) * ldc + i ] += alpha * ( ( acc[ j ][ 0 ] + acc[ j ][ 1 ] ) + ( acc[ j ][ 2 ] + acc[ j ][ 3 ] ) );
+            C[ size_t( j ) * ldc + i ] += alpha * s[ j ];
          }
       }
    }
@@ -343,141 +365,295 @@ void trsm_runn( int m, int n, const double* U, int ldu, double* B, int ldb ) {
 // Householder QR and one-sided Jacobi SVD.
 // ---------------------------------------------------------------------------------------------
 
-int householder_qr( int m, int k, double* A, std::vector<double>& tau, bool pivot, double stop,
-                    std::vector<int>* perm ) {
+namespace {
+
+constexpr int kQB = 32;  // QR panel width
+
+// x . y over n entries, four partial sums.
+BH_INLINE double dot_body( int n, const double* x, const double* y ) {
+   v4d a0 = { 0, 0, 0, 0 }, a1 = a0;
+   int i = 0;
+   for ( ; i + 8 <= n; i += 8 ) {
+      a0 += load4( x + i ) * load4( y + i );
+      a1 += load4( x + i + 4 ) * load4( y + i + 4 );
+   }
+   double s = hsum( a0 + a1 );
+   for ( ; i < n; ++i ) {
+      s += x[ i ] * y[ i ];
+   }
+   return s;
+}
+
+// The Householder reflector of x[ 0 .. n ): x[ 0 ] becomes beta, x[ 1 .. n ) the vector v (v[0] = 1
+// implied); returns tau (0: no reflection needed).
+BH_INLINE double reflector_body( int n, double* x ) {
+   const double alpha = x[ 0 ];
+   const double xn2 = dot_body( n - 1, x + 1, x + 1 );
+   if ( !( xn2 > 0 ) ) {
+      return 0.0;
+   }
+   const double beta = -std::copysign( std::sqrt( alpha * alpha + xn2 ), alpha );
+   const double scale = 1.0 / ( alpha - beta );
+   for ( int i = 1; i < n; ++i ) {
+      x[ i ] *= scale;
+   }
+   x[ 0 ] = beta;
+   return ( beta - alpha ) / beta;
+}
+
+// a <- (I - tau v v^T) a, both n long, v[ 0 ] = 1 implied.
+BH_INLINE void reflect_body( int n, double tau, const double* v, double* a ) {
+   const double w = tau * ( a[ 0 ] + dot_body( n - 1, v + 1, a + 1 ) );
+   a[ 0 ] -= w;
+   const v4d vw = bcast( w );
+   int i = 1;
+   for ( ; i + 4 <= n; i += 4 ) {
+      store4( a + i, load4( a + i ) - vw * load4( v + i ) );
+   }
+   for ( ; i < n; ++i ) {
+      a[ i ] -= w * v[ i ];
+   }
+}
+
+// Unblocked QR of the m x k matrix A (leading dimension lda): reflectors applied within A only.
+BH_INLINE void panel_body( int m, int k, double* A, int lda, double* tau ) {
    const int q = std::min( m, k );
-   tau.assign( std::max( q, 0 ), 0.0 );
-   std::vector<double> cn, cn0;
-   if ( pivot ) {
-      cn.resize( k );
-      for ( int l = 0; l < k; ++l ) {
-         const double* a = A + size_t( l ) * m;
-         double s = 0;
-         for ( int i = 0; i < m; ++i ) {
-            s += a[ i ] * a[ i ];
+   for ( int j = 0; j < q; ++j ) {
+      double* x = A + size_t( j ) * lda + j;
+      tau[ j ] = reflector_body( m - j, x );
+      if ( tau[ j ] != 0.0 ) {
+         for ( int l = j + 1; l < k; ++l ) {
+            reflect_body( m - j, tau[ j ], x, A + size_t( l ) * lda + j );
          }
-         cn[ l ] = s;
-      }
-      cn0 = cn;
-      if ( perm ) {
-         perm->resize( k );
-         std::iota( perm->begin(), perm->end(), 0 );
       }
    }
+}
+
+// Pivoted unblocked QR (see householder_qr); returns the number of steps.
+BH_INLINE int pivot_body( int m, int k, double* A, double* tau, double stop, int* perm,
+                                                           double* cn, double* cn0 ) {
+   const int q = std::min( m, k );
+   for ( int l = 0; l < k; ++l ) {
+      const double* a = A + size_t( l ) * m;
+      cn[ l ] = cn0[ l ] = dot_body( m, a, a );
+      perm[ l ] = l;
+   }
    for ( int j = 0; j < q; ++j ) {
-      if ( pivot ) {
-         double rest = 0;
-         int p = j;
-         for ( int l = j; l < k; ++l ) {
-            rest += cn[ l ];
-            if ( cn[ l ] > cn[ p ] ) {
-               p = l;
-            }
-         }
-         if ( rest <= stop * stop ) {
-            tau.resize( j );
-            return j;
-         }
-         if ( p != j ) {
-            std::swap_ranges( A + size_t( j ) * m, A + size_t( j + 1 ) * m, A + size_t( p ) * m );
-            std::swap( cn[ j ], cn[ p ] );
-            std::swap( cn0[ j ], cn0[ p ] );
-            if ( perm ) {
-               std::swap( ( *perm )[ j ], ( *perm )[ p ] );
-            }
+      double rest = 0;
+      int p = j;
+      for ( int l = j; l < k; ++l ) {
+         rest += cn[ l ];
+         if ( cn[ l ] > cn[ p ] ) {
+            p = l;
          }
       }
-      double* x = A + size_t( j ) * m;
-      const double alpha = x[ j ];
-      double xn2 = 0;
-      for ( int i = j + 1; i < m; ++i ) {
-         xn2 += x[ i ] * x[ i ];
+      if ( rest <= stop * stop ) {
+         return j;
       }
-      if ( xn2 > 0 ) {
-         const double beta = -std::copysign( std::sqrt( alpha * alpha + xn2 ), alpha );
-         tau[ j ] = ( beta - alpha ) / beta;
-         const double scale = 1.0 / ( alpha - beta );
-         for ( int i = j + 1; i < m; ++i ) {
-            x[ i ] *= scale;
-         }
-         x[ j ] = beta;
-         const double t = tau[ j ];
-         for ( int l = j + 1; l < k; ++l ) {
-            double* a = A + size_t( l ) * m;
-            double w = a[ j ];
-            for ( int i = j + 1; i < m; ++i ) {
-               w += x[ i ] * a[ i ];
-            }
-            w *= t;
-            a[ j ] -= w;
-            for ( int i = j + 1; i < m; ++i ) {
-               a[ i ] -= w * x[ i ];
-            }
-         }
+      if ( p != j ) {
+         std::swap_ranges( A + size_t( j ) * m, A + size_t( j + 1 ) * m, A + size_t( p ) * m );
+         std::swap( cn[ j ], cn[ p ] );
+         std::swap( cn0[ j ], cn0[ p ] );
+         std::swap( perm[ j ], perm[ p ] );
       }
-      if ( pivot ) {
-         for ( int l = j + 1; l < k; ++l ) {
-            const double* a = A + size_t( l ) * m;
-            cn[ l ] -= a[ j ] * a[ j ];
-            // Recompute a norm that has lost most of its digits to cancellation.
-            if ( cn[ l ] <= 1e-6 * cn0[ l ] ) {
-               double s = 0;
-               for ( int i = j + 1; i < m; ++i ) {
-                  s += a[ i ] * a[ i ];
-               }
-               cn[ l ] = s;
-               cn0[ l ] = s;
-            }
+      double* x = A + size_t( j ) * m + j;
+      tau[ j ] = reflector_body( m - j, x );
+      for ( int l = j + 1; l < k; ++l ) {
+         double* a = A + size_t( l ) * m;
+         if ( tau[ j ] != 0.0 ) {
+            reflect_body( m - j, tau[ j ], x, a + j );
+         }
+         cn[ l ] -= a[ j ] * a[ j ];
+         // Recompute a norm that has lost most of its digits to cancellation.
+         if ( cn[ l ] <= 1e-6 * cn0[ l ] ) {
+            cn[ l ] = cn0[ l ] = dot_body( m - j - 1, a + j + 1, a + j + 1 );
          }
       }
    }
    return q;
 }
 
-void apply_q( int m, int q, const double* A, const std::vector<double>& tau, int n, double* C, int ldc ) {
+// C (m x n) <- (H_0 ... H_{q-1}) C, unblocked, reflectors in A (leading dimension lda).
+BH_INLINE void applyq_body( int m, int q, const double* A, int lda, const double* tau,
+                                                             int n, double* C, int ldc ) {
    for ( int j = q - 1; j >= 0; --j ) {
-      const double t = tau[ j ];
-      if ( t == 0.0 ) {
+      if ( tau[ j ] == 0.0 ) {
          continue;
       }
-      const double* v = A + size_t( j ) * m;
+      const double* v = A + size_t( j ) * lda + j;
       for ( int c = 0; c < n; ++c ) {
-         double* x = C + size_t( c ) * ldc;
-         double w = x[ j ];
-         for ( int i = j + 1; i < m; ++i ) {
-            w += v[ i ] * x[ i ];
-         }
-         w *= t;
-         x[ j ] -= w;
-         for ( int i = j + 1; i < m; ++i ) {
-            x[ i ] -= w * v[ i ];
-         }
+         reflect_body( m - j, tau[ j ], v, C + size_t( c ) * ldc + j );
       }
    }
 }
 
-void jacobi_svd( int m, int n, double* A, std::vector<double>& V, std::vector<double>& s ) {
-   V.assign( size_t( n ) * n, 0.0 );
-   for ( int j = 0; j < n; ++j ) {
-      V[ size_t( j ) * n + j ] = 1.0;
+using PanelFn = void ( * )( int, int, double*, int, double* );
+using PivotFn = int ( * )( int, int, double*, double*, double, int*, double*, double* );
+using ApplyqFn = void ( * )( int, int, const double*, int, const double*, int, double*, int );
+
+void panel_base( int m, int k, double* A, int lda, double* tau ) { panel_body( m, k, A, lda, tau ); }
+int pivot_base( int m, int k, double* A, double* tau, double stop, int* perm, double* cn, double* cn0 ) {
+   return pivot_body( m, k, A, tau, stop, perm, cn, cn0 );
+}
+void applyq_base( int m, int q, const double* A, int lda, const double* tau, int n, double* C, int ldc ) {
+   applyq_body( m, q, A, lda, tau, n, C, ldc );
+}
+#if defined( __x86_64__ ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
+__attribute__( ( target( "avx2,fma" ) ) ) void panel_avx2( int m, int k, double* A, int lda, double* tau ) {
+   panel_body( m, k, A, lda, tau );
+}
+__attribute__( ( target( "avx2,fma" ) ) ) int pivot_avx2( int m, int k, double* A, double* tau, double stop, int* perm,
+                                                          double* cn, double* cn0 ) {
+   return pivot_body( m, k, A, tau, stop, perm, cn, cn0 );
+}
+__attribute__( ( target( "avx2,fma" ) ) ) void applyq_avx2( int m, int q, const double* A, int lda, const double* tau,
+                                                            int n, double* C, int ldc ) {
+   applyq_body( m, q, A, lda, tau, n, C, ldc );
+}
+const PanelFn g_panel = g_avx2 ? panel_avx2 : panel_base;
+const PivotFn g_pivot = g_avx2 ? pivot_avx2 : pivot_base;
+const ApplyqFn g_applyq = g_avx2 ? applyq_avx2 : applyq_base;
+#else
+const PanelFn g_panel = panel_base;
+const PivotFn g_pivot = pivot_base;
+const ApplyqFn g_applyq = applyq_base;
+#endif
+
+thread_local std::vector<double> t_qr_v, t_qr_t, t_qr_w;
+
+// The block reflector of panel reflectors j0 .. j0 + jb of A (m rows, leading dimension m):
+// H_j0 ... H_{j0+jb-1} = I - V T V^T.  V (mm x jb, mm = m - j0) explicit, T upper triangular.
+void block_reflector( int m, const double* A, const double* tau, int j0, int jb, std::vector<double>& V,
+                      std::vector<double>& T ) {
+   const int mm = m - j0;
+   V.assign( size_t( mm ) * jb, 0.0 );
+   T.assign( size_t( jb ) * jb, 0.0 );
+   for ( int j = 0; j < jb; ++j ) {
+      double* v = V.data() + size_t( j ) * mm;
+      const double* a = A + size_t( j0 + j ) * m + j0;
+      v[ j ] = 1.0;
+      for ( int i = j + 1; i < mm; ++i ) {
+         v[ i ] = a[ i ];
+      }
    }
-   s.assign( n, 0.0 );
-   if ( n == 0 ) {
+   // T(i, i) = tau_i; T(0:i, i) = -tau_i T(0:i, 0:i) V(:, 0:i)^T v_i.
+   std::vector<double> w( jb );
+   for ( int i = 0; i < jb; ++i ) {
+      const double ti = tau[ j0 + i ];
+      T[ size_t( i ) * jb + i ] = ti;
+      if ( i == 0 || ti == 0.0 ) {
+         continue;
+      }
+      const double* vi = V.data() + size_t( i ) * mm;
+      for ( int l = 0; l < i; ++l ) {
+         const double* vl = V.data() + size_t( l ) * mm;
+         double s = 0;
+         for ( int r = i; r < mm; ++r ) {  // vl and vi overlap from row i (vi is 0 above, 1 at i)
+            s += vl[ r ] * vi[ r ];
+         }
+         w[ l ] = -ti * s;
+      }
+      for ( int r = 0; r < i; ++r ) {
+         double s = 0;
+         for ( int l = r; l < i; ++l ) {
+            s += T[ size_t( l ) * jb + r ] * w[ l ];
+         }
+         T[ size_t( i ) * jb + r ] = s;
+      }
+   }
+}
+
+// C (mm x n) <- (I - V T V^T) C (trans = false) or (I - V T^T V^T) C (trans = true).
+void apply_block( int mm, int jb, const std::vector<double>& V, const std::vector<double>& T, bool trans, int n,
+                  double* C, int ldc, std::vector<double>& W ) {
+   W.resize( size_t( jb ) * n );
+   gemm( 'T', 'N', jb, n, mm, 1.0, V.data(), mm, C, ldc, 0.0, W.data(), jb );  // W = V^T C
+   // W <- T W or T^T W (T upper triangular, jb x jb).
+   for ( int c = 0; c < n; ++c ) {
+      double* w = W.data() + size_t( c ) * jb;
+      if ( !trans ) {
+         for ( int r = 0; r < jb; ++r ) {
+            double s = 0;
+            for ( int l = r; l < jb; ++l ) {
+               s += T[ size_t( l ) * jb + r ] * w[ l ];
+            }
+            w[ r ] = s;
+         }
+      } else {
+         for ( int r = jb - 1; r >= 0; --r ) {
+            double s = 0;
+            for ( int l = 0; l <= r; ++l ) {
+               s += T[ size_t( r ) * jb + l ] * w[ l ];
+            }
+            w[ r ] = s;
+         }
+      }
+   }
+   gemm( 'N', 'N', mm, n, jb, -1.0, V.data(), mm, W.data(), jb, 1.0, C, ldc );  // C -= V W
+}
+
+}  // namespace
+
+int householder_qr( int m, int k, double* A, std::vector<double>& tau, bool pivot, double stop,
+                    std::vector<int>* perm ) {
+   const int q = std::min( m, k );
+   tau.assign( std::max( q, 0 ), 0.0 );
+   if ( q <= 0 ) {
+      return 0;
+   }
+   if ( pivot ) {
+      std::vector<int> p( k );
+      std::vector<double> cn( k ), cn0( k );
+      const int steps = g_pivot( m, k, A, tau.data(), stop, p.data(), cn.data(), cn0.data() );
+      tau.resize( steps );
+      if ( perm ) {
+         perm->swap( p );
+      }
+      return steps;
+   }
+   if ( k < 2 * kQB || m < 2 * kQB ) {
+      g_panel( m, k, A, m, tau.data() );
+      return q;
+   }
+   // Blocked: factor a panel, then apply its block reflector to the columns on its right.
+   for ( int j0 = 0; j0 < q; j0 += kQB ) {
+      const int jb = std::min( kQB, q - j0 );
+      g_panel( m - j0, jb, A + size_t( j0 ) * m + j0, m, tau.data() + j0 );
+      if ( j0 + jb < k ) {
+         block_reflector( m, A, tau.data(), j0, jb, t_qr_v, t_qr_t );
+         apply_block( m - j0, jb, t_qr_v, t_qr_t, true, k - j0 - jb, A + size_t( j0 + jb ) * m + j0, m, t_qr_w );
+      }
+   }
+   return q;
+}
+
+void apply_q( int m, int q, const double* A, const std::vector<double>& tau, int n, double* C, int ldc ) {
+   if ( q <= 0 || n <= 0 ) {
       return;
    }
-   auto col = [&]( int j ) { return A + size_t( j ) * m; };
-   auto norm2 = [&]( const double* a ) {
-      double t = 0;
-      for ( int i = 0; i < m; ++i ) {
-         t += a[ i ] * a[ i ];
-      }
-      return t;
-   };
+   if ( q < 2 * kQB || m < 2 * kQB ) {
+      g_applyq( m, q, A, m, tau.data(), n, C, ldc );
+      return;
+   }
+   // Q C = H_0 ... H_{q-1} C: block reflectors from the last panel to the first.
+   const int nb = ( q + kQB - 1 ) / kQB;
+   for ( int b = nb - 1; b >= 0; --b ) {
+      const int j0 = b * kQB, jb = std::min( kQB, q - j0 );
+      block_reflector( m, A, tau.data(), j0, jb, t_qr_v, t_qr_t );
+      apply_block( m - j0, jb, t_qr_v, t_qr_t, false, n, C + j0, ldc, t_qr_w );
+   }
+}
+
+namespace {
+
+// The rotations of jacobi_svd: sweeps until no pair of columns of A (m x n) is far from
+// orthogonal, the same rotations applied to V (n x n).
+BH_INLINE void sweeps_body( int m, int n, double* A, double* V, double* d ) {
    const double tol = std::max( 1e-15, std::sqrt( double( m ) ) * DBL_EPSILON );
-   std::vector<double> d( n );
    for ( int sweep = 0; sweep < 60; ++sweep ) {
       for ( int j = 0; j < n; ++j ) {
-         d[ j ] = norm2( col( j ) );
+         const double* a = A + size_t( j ) * m;
+         d[ j ] = dot_body( m, a, a );
       }
       bool rotated = false;
       for ( int p = 0; p < n - 1; ++p ) {
@@ -486,12 +662,9 @@ void jacobi_svd( int m, int n, double* A, std::vector<double>& V, std::vector<do
             if ( alpha == 0.0 || beta == 0.0 ) {
                continue;
             }
-            double* ap = col( p );
-            double* aq = col( q );
-            double gamma = 0;
-            for ( int i = 0; i < m; ++i ) {
-               gamma += ap[ i ] * aq[ i ];
-            }
+            double* ap = A + size_t( p ) * m;
+            double* aq = A + size_t( q ) * m;
+            const double gamma = dot_body( m, ap, aq );
             if ( std::fabs( gamma ) <= tol * std::sqrt( alpha * beta ) ) {
                continue;
             }
@@ -499,13 +672,20 @@ void jacobi_svd( int m, int n, double* A, std::vector<double>& V, std::vector<do
             const double zeta = ( beta - alpha ) / ( 2.0 * gamma );
             const double t = std::copysign( 1.0, zeta ) / ( std::fabs( zeta ) + std::sqrt( 1.0 + zeta * zeta ) );
             const double c = 1.0 / std::sqrt( 1.0 + t * t ), sn = c * t;
-            for ( int i = 0; i < m; ++i ) {
+            const v4d vc = bcast( c ), vs = bcast( sn );
+            int i = 0;
+            for ( ; i + 4 <= m; i += 4 ) {
+               const v4d x = load4( ap + i ), y = load4( aq + i );
+               store4( ap + i, vc * x - vs * y );
+               store4( aq + i, vs * x + vc * y );
+            }
+            for ( ; i < m; ++i ) {
                const double x = ap[ i ], y = aq[ i ];
                ap[ i ] = c * x - sn * y;
                aq[ i ] = sn * x + c * y;
             }
-            double* vp = V.data() + size_t( p ) * n;
-            double* vq = V.data() + size_t( q ) * n;
+            double* vp = V + size_t( p ) * n;
+            double* vq = V + size_t( q ) * n;
             for ( int i = 0; i < n; ++i ) {
                const double x = vp[ i ], y = vq[ i ];
                vp[ i ] = c * x - sn * y;
@@ -519,8 +699,36 @@ void jacobi_svd( int m, int n, double* A, std::vector<double>& V, std::vector<do
          break;
       }
    }
+}
+
+using SweepsFn = void ( * )( int, int, double*, double*, double* );
+void sweeps_base( int m, int n, double* A, double* V, double* d ) { sweeps_body( m, n, A, V, d ); }
+#if defined( __x86_64__ ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
+__attribute__( ( target( "avx2,fma" ) ) ) void sweeps_avx2( int m, int n, double* A, double* V, double* d ) {
+   sweeps_body( m, n, A, V, d );
+}
+const SweepsFn g_sweeps = g_avx2 ? sweeps_avx2 : sweeps_base;
+#else
+const SweepsFn g_sweeps = sweeps_base;
+#endif
+
+}  // namespace
+
+void jacobi_svd( int m, int n, double* A, std::vector<double>& V, std::vector<double>& s ) {
+   V.assign( size_t( n ) * n, 0.0 );
    for ( int j = 0; j < n; ++j ) {
-      s[ j ] = std::sqrt( norm2( col( j ) ) );
+      V[ size_t( j ) * n + j ] = 1.0;
+   }
+   s.assign( n, 0.0 );
+   if ( n == 0 ) {
+      return;
+   }
+   auto col = [&]( int j ) { return A + size_t( j ) * m; };
+   std::vector<double> d( n );
+   g_sweeps( m, n, A, V.data(), d.data() );
+   for ( int j = 0; j < n; ++j ) {
+      const double* a = col( j );
+      s[ j ] = std::sqrt( dot_body( m, a, a ) );
    }
    // Sort by decreasing singular value.
    std::vector<int> order( n );

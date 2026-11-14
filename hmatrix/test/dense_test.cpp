@@ -127,7 +127,7 @@ double trsm_error() {
 // Q R = A and Q^T Q = I, with and without pivoting, for tall, square and wide A.
 double qr_error() {
    double worst = 0;
-   for ( const auto& s : std::vector<std::pair<int, int>>{ { 50, 7 }, { 30, 30 }, { 8, 20 }, { 1, 1 }, { 300, 60 } } ) {
+   for ( const auto& s : std::vector<std::pair<int, int>>{ { 50, 7 }, { 30, 30 }, { 8, 20 }, { 1, 1 }, { 300, 60 }, { 400, 100 }, { 200, 150 }, { 70, 200 } } ) {
       for ( bool pivot : { false, true } ) {
          const int m = s.first, k = s.second;
          const std::vector<double> A = random( size_t( m ) * k );
