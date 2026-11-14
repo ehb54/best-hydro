@@ -127,8 +127,9 @@ double estimate_bytes( int n, double eps, bool direct, double eps_pre, bool sing
    if ( single ) {
       kb *= 0.5;
    }
-   // Heap overhead, and GMRES's vectors for six right-hand sides.
-   kb = 1.3 * kb + ( direct ? 0.5 : 4.5 );
+   // Heap overhead and GMRES's vectors; the direct H-LU's peak is about 1.7 times its factors (the
+   // products of large hierarchical blocks build full-height temporaries).
+   kb = ( direct ? 1.75 : 1.3 ) * kb + ( direct ? 0.5 : 4.5 );
    return kb * 1e3 * n;
 }
 
