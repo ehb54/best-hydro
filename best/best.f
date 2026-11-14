@@ -121,6 +121,11 @@ C	the last term was kept, so Dtr, the center of diffusion and Dtt were wrong.
 C	11/13/2026 E. H. Brookes: DIFCO's transform of Krt and Krr to the center of resistance
 C	used Krt in place of its transpose, so Krt there was not symmetric.  Drr, Dtr, the
 C	center of diffusion and Dtt now agree with the direct inverse of the 6x6 friction tensor.
+C	11/13/2026 E. H. Brookes: GR and its LU factors are kept in the module BESOLVE, whose
+C	BESOLV does the solves for DIFCO and VISCO.  With -vc, VISCO no longer solves for the
+C	unit translations again (DIFCO has them) or for the strain flows about the center of
+C	viscosity (they follow from those at the centroid and the unit translations), so it
+C	makes 11 solves instead of 19.
 	
 
 c      ARRAY DIMENSIONS
@@ -136,9 +141,9 @@ c      calculations as a function of the number of triangles, and extrapolated v
 c      results.  The area correction should be used for such precise work (that is, provide
 c      the Connolly precise surface area.)
 
-       INTEGER,DIMENSION(:),ALLOCATABLE :: IPIV
+       USE BESOLVE, ONLY: GR, IPIV
        REAL,DIMENSION(:),ALLOCATABLE :: AREA, XMU
-       REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X, GR,
+       REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X,
      $ B, V0
        REAL,DIMENSION(:,:,:),ALLOCATABLE :: G
        REAL,DIMENSION(:,:,:,:),ALLOCATABLE :: H
@@ -175,7 +180,7 @@ c      read number of surface patches
        NAR3 = 3*NAR
                                                                 
        ALLOCATE(V1(NAR,3),V2(NAR,3),V3(NAR,3),X(NAR,3),
-     $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3,8),F(NAR,3),B(NAR3,6),
+     $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3,5),F(NAR,3),B(NAR3,6),
      $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3),
      $ XMU(NAR3))
                                                                                 
@@ -389,13 +394,13 @@ c      Test the variable info and abort if there is a problem.
 
 C      IV. CALCULATE THE DIFFUSION TENSORS
 
-       CALL DIFCO(OUTFNM2,NAR,X,GR,AREA,
-     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV)
+       CALL DIFCO(OUTFNM2,NAR,X,AREA,
+     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F)
 
 C      V. CALCULATE THE VISCOSITY FACTOR IF REQUESTED
 
        IF(IVISCO.EQ.1) CALL VISCO(OUTFNM2,NAR,D1,D2,D3,
-     $ CHIPRIME,AREA,X,ICOV,CG,GR,IPIV,INFO,G,H,W,V0)
+     $ CHIPRIME,AREA,X,ICOV,CG,B,INFO,G,H,W,V0)
 
 C      VI. OUTPUT
 

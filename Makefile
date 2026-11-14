@@ -12,6 +12,9 @@
 #
 # BEST fills its matrix with OpenMP threads (OMP_NUM_THREADS); the LAPACK
 # calls use the threads of the LAPACK/BLAS library (e.g. OPENBLAS_NUM_THREADS).
+#
+# best/besolve.f90 is a module (GR and the solves with it), so it comes first;
+# its .mod file goes in build/.
 
 FC     = gfortran
 FFLAGS = -O2
@@ -20,7 +23,7 @@ FIXED  = -ffixed-line-length-none
 OPENMP = -fopenmp
 LAPACK = -llapack -lblas
 
-BEST_SRC   = best/best.f best/input.f best/tgetgr.f best/triangleint.f \
+BEST_SRC   = best/besolve.f90 best/best.f best/input.f best/tgetgr.f best/triangleint.f \
              best/jacobi.f best/matin3.f best/visco.f best/difco.f best/output.f
 RCOAL_SRC  = rcoal/rcoal.f rcoal/scoalesce.f rcoal/index.f
 RCOAL3_SRC = rcoal3/rcoal3.f rcoal3/scoalesce3.f rcoal3/index.f
@@ -30,8 +33,11 @@ all: bin/best bin/rcoal bin/rcoal3
 bin:
 	mkdir -p bin
 
-bin/best: $(BEST_SRC) | bin
-	$(FC) $(FFLAGS) $(OPENMP) $(R8) $(FIXED) -o $@ $(BEST_SRC) $(LAPACK)
+build:
+	mkdir -p build
+
+bin/best: $(BEST_SRC) | bin build
+	$(FC) $(FFLAGS) $(OPENMP) $(R8) $(FIXED) -Jbuild -o $@ $(BEST_SRC) $(LAPACK)
 
 bin/rcoal: $(RCOAL_SRC) | bin
 	$(FC) $(FFLAGS) $(R8) $(FIXED) -o $@ $(RCOAL_SRC)
@@ -44,6 +50,6 @@ test: all
 	test/run_tests.sh bin
 
 clean:
-	rm -rf bin
+	rm -rf bin build
 
 .PHONY: all test clean

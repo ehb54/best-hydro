@@ -1,12 +1,15 @@
-       SUBROUTINE DIFCO(OUTFNM2,NAR,X,GR,AREA,
-     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F,IPIV)
+       SUBROUTINE DIFCO(OUTFNM2,NAR,X,AREA,
+     $ INFO,DRR,DTT,DTR,CG,URC,UDR,TQ,B,F)
 
 c      THE DIFFUSION TENSORS ARE DETERMINED IN THIS SUBROUTINE
+c      On return B holds the solutions for the six flows; VISCO uses the three
+c      translations.
 
+       USE BESOLVE, ONLY: BESOLV
        DIMENSION FTOTH(3),TTOTH(3),OMGA(3),D(3),V(3,3),U(3),
      $ DTR(3,3),DRR(3,3),DTT(3,3),UU(3,3),AUX(3,3),URC(3),UDR(3),
-     $ GG(3,3),RR(3,3),X(NAR,3),GR(3*NAR,3*NAR),AREA(NAR),
-     $ F(NAR,3),B(3*NAR,6),TQ(NAR,3),IPIV(3*NAR)
+     $ GG(3,3),RR(3,3),X(NAR,3),AREA(NAR),
+     $ F(NAR,3),B(3*NAR,6),TQ(NAR,3)
        CHARACTER*80 OUTFNM2
        REAL KTT(3,3),KTR(3,3),KRT(3,3),KRR(3,3),KTTINV(3,3)
 
@@ -40,10 +43,10 @@ C      unit translations along x,y,z for MX=1-3, unit rotations about x,y,z for 
        B(I0+2,6)= x(n,1)
        enddo
 
-C      Call the LAPACK computational routine to solve the linear system of equations
-C      for all six flows at once, with the LU factors of GR.
+C      Solve the linear system of equations for all six flows at once (BESOLV,
+C      with the LU factors of GR).
 
-       CALL DGETRS('N',NAR3,6,GR,NAR3,IPIV,B,NAR3,INFO)
+       CALL BESOLV(6,B,INFO)
 
        OPEN(12,FILE=OUTFNM2,STATUS='OLD',POSITION='APPEND')
        WRITE(12,*) ' **** TRANSLATION/ROTATION FLOWS ****'
