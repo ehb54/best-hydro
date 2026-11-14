@@ -185,7 +185,11 @@ C	Needed to use the above vector between Centers of Resistance/Centroid.
        uu(3,3)=0.0
 
 c      Transform Krr, Krt to Center of Resistance. Krt should be symmetric..
-                
+C      Krt(j,i) is force j per unit rotation i.  With r = uRC and uu = [r]x,
+C      Krt' = Krt + Ktt uu and Krr' = Krr - uu Ktt uu + Krt^T uu - uu Krt.
+C      These used Krt where Krt^T belongs (Krt - uu Ktt, Krt uu - uu Krt^T),
+C      which left Krt' unsymmetric.
+
        do i=1,3
        do j=1,3
        temp=0.0
@@ -193,16 +197,16 @@ c      Transform Krr, Krt to Center of Resistance. Krt should be symmetric..
        temp=temp+uu(i,k)*(Ktt(k,1)*uu(1,j)+Ktt(k,2)*uu(2,j)
      $ +Ktt(k,3)*uu(3,j))
        enddo
-       temp1 = Krt(i,1)*uu(1,j)+Krt(i,2)*uu(2,j)+Krt(i,3)*uu(3,j)
-       temp2 = uu(i,1)*Krt(j,1)+uu(i,2)*Krt(j,2)+uu(i,3)*Krt(j,3)
+       temp1 = Krt(1,i)*uu(1,j)+Krt(2,i)*uu(2,j)+Krt(3,i)*uu(3,j)
+       temp2 = uu(i,1)*Krt(1,j)+uu(i,2)*Krt(2,j)+uu(i,3)*Krt(3,j)
        Krr(i,j)=Krr(i,j)-temp +temp1-temp2 
        enddo
        enddo
 
        do i=1,3
        do j=1,3
-       Krt(i,j)=Krt(i,j)-uu(i,1)*Ktt(1,j)-uu(i,2)*Ktt(2,j)
-     $ -uu(i,3)*Ktt(3,j)
+       Krt(i,j)=Krt(i,j)+Ktt(i,1)*uu(1,j)+Ktt(i,2)*uu(2,j)
+     $ +Ktt(i,3)*uu(3,j)
        enddo
        enddo
       
@@ -290,12 +294,14 @@ C      MULTIPLY BY 4/3 FOR PRE-AVERAGED CALCULATION
        ENDIF
 
 C      Compute Dtr (to be used in Center of Diffusion Transformation)
+C      Dtr = -Kttinv Krt^T Drr.  The sum over k used to keep only its
+C      last term (k=3).
 
        do i=1,3
        do j=1,3
        temp = 0.0
        do k=1,3
-       temp = Kttinv(i,k)*(Krt(1,k)*Drr(1,j)+
+       temp = temp +Kttinv(i,k)*(Krt(1,k)*Drr(1,j)+
      $ Krt(2,k)*Drr(2,j)+Krt(3,k)*Drr(3,j))
        end do
        dtr(i,j) =-temp

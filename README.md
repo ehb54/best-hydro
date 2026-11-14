@@ -111,6 +111,12 @@ Work since `v4.0-aragon`:
   lysozyme mesh CHI came out as 1054 instead of 3.24. With the area correction, D_t, CHI
   and [η] change by 2.3e-6 or less
   ([#10](https://github.com/ehb54/best-hydro/pull/10)).
+- BEST: translation-rotation coupling. Dtr kept one of its three terms, and the
+  transform to the center of resistance used the coupling tensor where its transpose
+  belongs. The center of diffusion was off by 0.1 to 0.3 Å, and Drr by up to 2.4e-4. The
+  results now agree with the direct inverse of the 6×6 friction tensor, and `make test`
+  checks that a rotated mesh gives the same results
+  ([#11](https://github.com/ehb54/best-hydro/pull/11)).
 
 ## References
 
