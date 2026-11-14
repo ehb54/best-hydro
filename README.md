@@ -24,6 +24,7 @@ made since; see [Versions](#versions).
 | Directory | |
 |---|---|
 | `best/` | BEST 4.0 (April 2025), with the author's PGI make file and `best.contents` |
+| `hmatrix/` | the H-matrix solver BEST uses above 10,000 triangles (C++17); see [Large meshes](#large-meshes) |
 | `rcoal/` | rcoal 2.0 (2007), for MSROLL triangulations |
 | `rcoal3/` | rcoal 3.0 (2012), which also reads MSMS triangulations |
 | `doc/` | the BEST Hydrodynamics Package manual, version 3.9 (2014) |
@@ -34,12 +35,13 @@ distributed.
 
 ## Building
 
-You need gfortran and LAPACK/BLAS.
+You need gfortran, g++ (C++17; GCC 8 or later) and LAPACK/BLAS.
 
 ```bash
-make                                  # Linux, reference LAPACK/BLAS
-make LAPACK="-lopenblas"              # or another LAPACK/BLAS
-make LAPACK="-framework Accelerate"   # macOS
+make                                                # Linux, reference LAPACK/BLAS
+make LAPACK="-lopenblas"                            # or another LAPACK/BLAS
+make LAPACK="-framework Accelerate" CXXLIBS=-lc++   # macOS, where g++ is clang
+make HMATRIX=                                       # BEST without the H-matrix solver (no C++)
 ```
 
 This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. `make test` (with the same
@@ -47,8 +49,10 @@ This builds `bin/best`, `bin/rcoal` and `bin/rcoal3`. `make test` (with the same
 `-r8`, so that every REAL is 8 bytes; the Makefile uses gfortran's equivalent,
 `-fdefault-real-8 -fdefault-double-8`. He recommends optimization no higher than `-O2`.
 
-BEST stores a dense 3N x 3N matrix for N triangles: about 0.067 N² GB, N in
-thousands. Its run time grows as N³.
+Up to 10,000 triangles BEST stores a dense 3N x 3N matrix for N triangles: about
+0.067 N² GB, N in thousands, and its run time grows as N³. Above that it uses an
+H-matrix solver, whose memory and time grow about as N log N; see
+[Large meshes](#large-meshes).
 
 ## Running
 
@@ -82,6 +86,61 @@ their output next to their input:
 - `examples/rcoal`: the `.his` files give the edge fraction of each output, so for
   example `rcoal -f test.c3p -e 0.8` reproduces `test_05770`.
 - `examples/rcoal3`: `rcoal3 -f 1crn.face -nmax 2500 -nmin 1500 -n 3 -s`.
+
+## Large meshes
+
+Above 10,000 triangles BEST uses an H-matrix solver (`hmatrix/`) instead of the dense
+matrix. It computes the same matrix entries, bit for bit. The blocks between
+well-separated groups of triangles are stored in low-rank form, accurate to a relative
+eps. It then solves by GMRES, preconditioned by a coarse H-LU factorization of the same
+matrix. The results go through BEST's own code, so the `.be` and `.log` files are the same
+kind as before; the `.log` also records the solver's memory, ranks, iterations and
+residuals.
+
+| Option | |
+|---|---|
+| `-hm` | the H-matrix solver at any number of triangles |
+| `-dn` | the dense solver at any number of triangles |
+| `-he eps` | the H-matrix accuracy (default `1e-4`) |
+| `-hlu` | a direct H-LU factorization at eps instead of GMRES |
+
+**Accuracy.** At the default eps of 1e-4 the H-matrix solver matches the dense solver
+closely. These are the largest relative differences in D_t, D_r, CHI and [η]:
+
+- **GMRES:**
+  - 2.7e-6 on 14 meshes and flag sets of 2,000 to 15,000 triangles;
+  - 6e-7 on a 30,050-triangle mesh.
+- **`-hlu`:** 2.3e-5.
+
+Both are far below the error of the 1/N extrapolation. `-he 1e-6` changes the GMRES results
+by 6e-7 or less, on meshes of up to 254,292 triangles. At 30,050 triangles it is within
+3e-9 of dense, and it takes about 1.5 times the memory and the time.
+
+**Size.** These are lysozyme (1AKI) meshes from sesmesh, run with `-vc -mw 14305` and the
+defaults (GMRES, eps 1e-4). The node is a 2 × EPYC 7713 with 64 threads. "Dense" is the
+72 N² bytes that the dense matrix alone would take.
+
+| Triangles | H-matrix | Preconditioner | GMRES iterations | Time | Peak memory | Dense |
+|---|---|---|---|---|---|---|
+| 30,050 | 4.0 GB | 0.7 GB | 7 | 10 s | 5 GB | 65 GB (315 s) |
+| 60,278 | 8.7 GB | 1.6 GB | 8 | 23 s | 12 GB | 262 GB |
+| 120,976 | 18.8 GB | 3.5 GB | 9 | 49 s | 26 GB | 1.1 TB |
+| 254,292 | 42.5 GB | 7.8 GB | 9 | 1.7 min | 58 GB | 4.7 TB |
+| 508,720 | 90.3 GB | 16.9 GB | 11 | 3.8 min | 124 GB | 19 TB |
+| 1,019,462 | 190.7 GB | 36.1 GB | 11 | 7.9 min | 263 GB | 75 TB |
+
+The memory per triangle grows slowly, from 155 KB at 120,000 triangles to 187 KB at
+1 million, so a node with 256 GB stops just short of 1 million triangles at eps 1e-4.
+
+`-hlu` factors the whole matrix at eps instead, with no iterations. It needs more memory,
+and it is slower except on small meshes. At 508,720 triangles it took 11 minutes and
+170 GB, against GMRES's 3.8 minutes and 124 GB, and its results were within 8e-6 of
+GMRES's. Its peak memory is about 1.7 times its factors.
+
+The solver uses `OMP_NUM_THREADS` threads, or every hardware thread if that is not set.
+Before it builds the matrix, BEST estimates the memory needed and stops with an error if
+the node does not have that much available; `BEST_HMATRIX_MEMCHECK=0` turns the check
+off.
 
 ## Versions
 
@@ -124,6 +183,10 @@ Work since `v4.0-aragon`:
   routine, `BESOLV` in `best/besolve.f90`, which holds the matrix. The printed results are
   unchanged on 14 meshes and flag sets, and `make test` now checks `-vc`
   ([#13](https://github.com/ehb54/best-hydro/pull/13)).
+- BEST: an H-matrix solver for large meshes, used above 10,000 triangles. It ran a
+  lysozyme mesh of 1.02 million triangles on one node in 8 minutes and 263 GB. Its results
+  agree with the dense solver's to about 1e-6 (2.7e-6 at most on 14 test meshes)
+  ([#14](https://github.com/ehb54/best-hydro/pull/14)).
 
 ## References
 
