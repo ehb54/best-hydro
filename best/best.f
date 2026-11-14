@@ -118,6 +118,9 @@ C	such mode.  With the area correction, D_t, CHI and [eta] change by 2.3e-6 or l
 C	D_r by 1.1e-5 or less.
 C	11/13/2026 E. H. Brookes: DIFCO sums all three terms of Dtr = -Kttinv Krt^T Drr.  Only
 C	the last term was kept, so Dtr, the center of diffusion and Dtt were wrong.
+C	11/13/2026 E. H. Brookes: DIFCO's transform of Krt and Krr to the center of resistance
+C	used Krt in place of its transpose, so Krt there was not symmetric.  Drr, Dtr, the
+C	center of diffusion and Dtt now agree with the direct inverse of the 6x6 friction tensor.
 	
 
 c      ARRAY DIMENSIONS
