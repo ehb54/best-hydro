@@ -118,6 +118,12 @@ Work since `v4.0-aragon`:
   results now agree with the direct inverse of the 6×6 friction tensor, and `make test`
   checks that a rotated mesh gives the same results
   ([#11](https://github.com/ehb54/best-hydro/pull/11)).
+- BEST: with `-vc`, 11 solves instead of 19. The viscosity calculation reuses the
+  diffusion calculation's solutions for the unit translations, and gets the strain flows
+  about the center of viscosity from those about the centroid. The solves go through one
+  routine, `BESOLV` in `best/besolve.f90`, which holds the matrix. The printed results are
+  unchanged on 14 meshes and flag sets, and `make test` now checks `-vc`
+  ([#13](https://github.com/ehb54/best-hydro/pull/13)).
 
 ## References
 

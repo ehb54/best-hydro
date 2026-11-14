@@ -1,0 +1,9 @@
+# BEST on examples/best/2eu7_02562 with -vc -mw 30000 (main 66b175e, gfortran -O2, OpenBLAS).
+# value  relative-tolerance  label in the .be file
+0.10003E-05   2e-4  1/3 Trace DTT(EXACT)
+0.15978E+08   2e-4  1/3 Trace DRR(EXACT)
+0.301035E+01  2e-4  CHI
+0.204550E+01  2e-4  ETA (cm^3/g)
+-0.14093E+00  2e-4  Dx
+-0.11079E+00  2e-4  Dy
+0.59339E-01   2e-4  Dz
