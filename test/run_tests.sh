@@ -35,6 +35,16 @@ else
    bad "best: 2eu7_02562 rotated should give the same results (see $d)"
 fi
 
+# BEST: the same mesh without the area correction.  The correction keeps GR
+# away from singular; without it, BEST must deflate GR's near-null space (a
+# uniform pressure on the surface) or the results are wrong.
+if "$bin/best" -f 2eu7_02562 -na -v -mw 30000 > best_na.out 2>&1 \
+   && perl "$t/check_best.pl" 2eu7_02562vmn.be "$t/expected_best_2eu7_na.txt"; then
+   ok "best: 2eu7_02562 -na -v -mw 30000"
+else
+   bad "best: 2eu7_02562 -na -v -mw 30000 (see $d)"
+fi
+
 # rcoal: the author's test case.  Each mesh is regenerated from the edge
 # fraction recorded in its .his file, and must be closed.  It must also
 # reproduce the author's mesh, unless test/expected_rcoal.txt gives another
