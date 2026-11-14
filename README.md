@@ -103,6 +103,7 @@ residuals.
 | `-dn` | the dense solver at any number of triangles |
 | `-he eps` | the H-matrix accuracy (default `1e-4`) |
 | `-hlu` | a direct H-LU factorization at eps instead of GMRES |
+| `-hs` | the H-matrix and its factors in single precision: half the memory |
 
 **Accuracy.** At the default eps of 1e-4 the H-matrix solver matches the dense solver
 closely. These are the largest relative differences in D_t, D_r, CHI and [η]:
@@ -132,10 +133,37 @@ defaults (GMRES, eps 1e-4). The node is a 2 × EPYC 7713 with 64 threads. "Dense
 The memory per triangle grows slowly, from 155 KB at 120,000 triangles to 187 KB at
 1 million, so a node with 256 GB stops just short of 1 million triangles at eps 1e-4.
 
+**Single precision.** `-hs` stores the H-matrix and its factors in single precision. The
+arithmetic stays in double precision: the products are summed in double, and the
+compression and the factorization work on double copies. It takes half the memory and 8 to
+11% less time, and it changes the results very little. These are the largest relative
+differences in D_t, D_r, CHI and [η] from the same runs without `-hs`:
+
+- **GMRES:** 1.1e-7 on the 14 meshes of 2,000 to 15,000 triangles; 6e-11 at 30,050 to
+  1,019,462 triangles, and 2e-11 with `-he 1e-6` (30,050 to 254,292).
+- **`-hlu`:** 2.2e-7 on the 14 small meshes; 3e-11 at 120,976 to 508,720 triangles.
+
+The same meshes with `-hs`, and one of 2 million triangles:
+
+| Triangles | H-matrix | Preconditioner | GMRES iterations | Time | Peak memory |
+|---|---|---|---|---|---|
+| 30,050 | 2.0 GB | 0.35 GB | 7 | 9 s | 3 GB |
+| 60,278 | 4.3 GB | 0.8 GB | 8 | 20 s | 6 GB |
+| 120,976 | 9.4 GB | 1.7 GB | 9 | 42 s | 13 GB |
+| 254,292 | 21.2 GB | 3.9 GB | 9 | 1.5 min | 30 GB |
+| 508,720 | 45.2 GB | 8.5 GB | 11 | 3.3 min | 63 GB |
+| 1,019,462 | 95.4 GB | 18.0 GB | 11 | 7.3 min | 131 GB |
+| 2,039,690 | 201.0 GB | 38.4 GB | 13 | 16 min | 274 GB |
+
+So with `-hs` 1 million triangles fit on a node with 256 GB, and 2 million on this node
+(512 GB). Without `-hs` the 2-million-triangle mesh would need about twice the memory,
+more than the node has: above, `-hs` took 0.50 to 0.55 times the peak memory without it,
+and 0.50 from 509k triangles up.
+
 `-hlu` factors the whole matrix at eps instead, with no iterations. It needs more memory,
 and it is slower except on small meshes. At 508,720 triangles it took 11 minutes and
-170 GB, against GMRES's 3.8 minutes and 124 GB, and its results were within 8e-6 of
-GMRES's. Its peak memory is about 1.7 times its factors.
+170 GB (with `-hs`, 10 minutes and 81 GB), against GMRES's 3.8 minutes and 124 GB, and its
+results were within 8e-6 of GMRES's. Its peak memory is about 1.7 times its factors.
 
 The solver uses `OMP_NUM_THREADS` threads, or every hardware thread if that is not set.
 Before it builds the matrix, BEST estimates the memory needed and stops with an error if
@@ -185,7 +213,9 @@ Work since `v4.0-aragon`:
   ([#13](https://github.com/ehb54/best-hydro/pull/13)).
 - BEST: an H-matrix solver for large meshes, used above 10,000 triangles. It ran a
   lysozyme mesh of 1.02 million triangles on one node in 8 minutes and 263 GB. Its results
-  agree with the dense solver's to about 1e-6 (2.7e-6 at most on 14 test meshes)
+  agree with the dense solver's to about 1e-6 (2.7e-6 at most on 14 test meshes). With
+  `-hs` it stores the matrix in single precision, in half the memory: a mesh of 2.04
+  million triangles took 16 minutes and 274 GB
   ([#14](https://github.com/ehb54/best-hydro/pull/14)).
 
 ## References
