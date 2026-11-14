@@ -54,6 +54,7 @@ c	 below.
 c      USAGE
 c      Typing "best" without arguments produces the usage statement:
 c      'Usage : best -f input_filename [-na] [-p] [-v] [-vc] [-mw]'
+c      '        [-hm | -dn] [-he eps] [-hlu]'
 c	
 c      The -na option causes the program to perform a calculation wihtout the area correction.
 c		In this case, the Connolly .c3v file containing the precise surface area value is not 
@@ -67,6 +68,12 @@ c               the center of viscocity.  This option is more time consuming but
 c               asymmetric shapes such as bent rods.
 c      The -mw option causes the program to read the molecular weight in grams per mole
 c               from the input line.
+c      The -hm option uses the H-matrix solver (see BESOLVE) at any number of triangles, and
+c               -dn the dense solver.  Without either, BEST uses the dense solver up to
+c               10000 triangles and the H-matrix solver above that.
+c      The -he option sets the H-matrix accuracy eps (default 1e-4), e.g. -he 1e-6.
+c      The -hlu option makes the H-matrix solver factor the matrix (H-LU) instead of
+c               using GMRES.
 
 c      ACKNOWLEDGEMENTS
 c      I thank Stuart Allison, Georgia State University, for the initial push in this work
@@ -126,6 +133,12 @@ C	BESOLV does the solves for DIFCO and VISCO.  With -vc, VISCO no longer solves 
 C	unit translations again (DIFCO has them) or for the strain flows about the center of
 C	viscosity (they follow from those at the centroid and the unit translations), so it
 C	makes 11 solves instead of 19.
+C	11/13/2026 E. H. Brookes: Above 10000 triangles (NHMAT in BESOLVE), or with -hm, BEST uses
+C	an H-matrix solver (hmatrix/, C++) instead of the dense GR, which takes 72*NAR**2 bytes.
+C	It compresses GR to a relative accuracy eps (-he, default 1e-4) and solves by GMRES with
+C	an H-LU preconditioner, or by a direct H-LU factorization (-hlu); memory and time grow
+C	about as NAR*log(NAR).  The results agree with the dense ones to about 1e-5.  -dn keeps
+C	the dense solver at any size.
 	
 
 c      ARRAY DIMENSIONS
@@ -141,7 +154,7 @@ c      calculations as a function of the number of triangles, and extrapolated v
 c      results.  The area correction should be used for such precise work (that is, provide
 c      the Connolly precise surface area.)
 
-       USE BESOLVE, ONLY: GR, IPIV
+       USE BESOLVE, ONLY: GR, IPIV, HMAVAIL, HMPREP, NHMAT
        REAL,DIMENSION(:),ALLOCATABLE :: AREA, XMU
        REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X,
      $ B, V0
@@ -165,7 +178,7 @@ c      Change the version number here.
 C      I. INPUT SURFACE TRIANGULATION/CENTROID SHIFT
 	
        call input(infnm,iarea,truearea,TRUEVOL,cg,
-     $ IVISCO,ICOV,MW,WM)
+     $ IVISCO,ICOV,MW,WM,IHM,HEPS,IHLU)
 
 c      read number of surface patches
 
@@ -179,10 +192,19 @@ c      read number of surface patches
                 
        NAR3 = 3*NAR
                                                                 
+c      The solver (module BESOLVE): dense LAPACK up to NHMAT triangles, the H-matrix
+c      solver above that, unless -dn or -hm says otherwise.
+
+       IF(IHM.EQ.0) THEN
+       IHM = -1
+       IF(NAR.GT.NHMAT.AND.HMAVAIL()) IHM = 1
+       ENDIF
+
        ALLOCATE(V1(NAR,3),V2(NAR,3),V3(NAR,3),X(NAR,3),
-     $ GR(NAR3,NAR3),AREA(NAR),V0(NAR3,5),F(NAR,3),B(NAR3,6),
-     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),IPIV(NAR3),
+     $ AREA(NAR),V0(NAR3,5),F(NAR,3),B(NAR3,6),
+     $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),
      $ XMU(NAR3))
+       IF(IHM.NE.1) ALLOCATE(GR(NAR3,NAR3),IPIV(NAR3))
                                                                                 
 c      read input file:
 c      We read-in only the triangle vertices and the number of triangles, NAR.
@@ -292,6 +314,12 @@ c      AREA CORRECTION
        write(12,*) ' '
        close(12)
 
+c      With the H-matrix solver, HMPREP does all of II and III without forming GR.
+
+       IF(IHM.EQ.1) THEN
+       CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU)
+       ELSE
+
 c      II. CONSTRUCTION OF THE SUPER "G" MATRIX, GR
 c      The next call constructs the coefficients of the linear equations to be solved.
 
@@ -391,6 +419,8 @@ c      Test the variable info and abort if there is a problem.
        STOP
        endif
        endif
+
+       ENDIF
 
 C      IV. CALCULATE THE DIFFUSION TENSORS
 
