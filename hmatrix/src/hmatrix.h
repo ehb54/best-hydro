@@ -13,6 +13,8 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cluster.h"
@@ -22,6 +24,13 @@
 namespace bh {
 
 enum class BType { H, R, D };
+
+// The H-LU met a pivot that is 0 (finite) or not finite (NaN or Inf), at unknown row (tree order).
+struct ZeroPivot : std::runtime_error {
+   int row;
+   bool finite;
+   ZeroPivot( int r, bool f ) : std::runtime_error( f ? "H-LU: zero pivot" : "H-LU: pivot not finite" ), row( r ), finite( f ) {}
+};
 
 template <class T>
 struct BlockT {
@@ -78,12 +87,20 @@ class HMatrixT {
 
    // In-place H-LU without pivoting: afterwards the blocks hold L (unit lower) and U, with every
    // low-rank result truncated at eps.  Returns the smallest |pivot| / largest |pivot| seen.
+   // Throws ZeroPivot at a pivot that is 0 or not finite.
    double lu( double eps );
+   // After lu(): the unknown (tree order) of the smallest |pivot|.
+   static int pivot_row();
    // X <- (L U)^-1 X for p columns, after lu(); all columns at once, parallel over block rows.
    void lu_solve( double* X, int ldx, int p ) const;
    // A <- A + gamma u v^T (u, v in tree order): appended to every low-rank leaf (rank + 1) and added to
    // every dense leaf.
    void add_rank1( double gamma, const double* u, const double* v );
+   // A <- A + sum_k gamma[k] u_k u_k^T, where u_k is u (tree order) on the triangles of surface k
+   // and 0 elsewhere; comp[p] is the surface (from 0) of the triangle at tree position p.  Each
+   // leaf gets the terms of the surfaces its rows and columns share: added to a dense leaf, one
+   // column each appended to a low-rank leaf.
+   void add_deflation( const std::vector<double>& gamma, const std::vector<int>& comp, const double* u );
    // Truncation counts and CPU seconds by call site in lu() since the last reset.
    static std::string profile( bool reset );
    // lu() runs the parts of blocks of at least leaves x leaves leaf clusters on separate threads.

@@ -163,6 +163,9 @@ GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const doub
          res.relres[ c ] = norm( R.col( c ), n ) / bnorm[ c ];
          if ( res.relres[ c ] <= tol ) {
             done[ c ] = 1;
+         } else if ( !( res.relres[ c ] <= 2.0 ) ) {
+            done[ c ] = 1;
+            res.broke = true;
          }
       }
    }

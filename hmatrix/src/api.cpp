@@ -21,6 +21,7 @@
 #include "hmatrix.h"
 #include "kernel.h"
 #include "mat.h"
+#include "meshcheck.h"
 #include "parallel.h"
 
 #ifdef __GLIBC__
@@ -38,6 +39,15 @@ const int kRestart = 30;      // GMRES restart length
 const int kMaxSteps = 500;    // GMRES steps (batched products) per solve
 const double kTolFactor = 0.1;  // GMRES stops at a relative residual of kTolFactor * eps
 const int kForkLeaves = 2;      // the H-LU forks for blocks of at least this many leaf clusters a side
+// The GMRES preconditioner is rebuilt 10 times finer, down to kPreMin, when its H-LU breaks down: a
+// pivot that is 0 or not finite, or a smallest pivot ratio below kPivotCollapse (smooth meshes give
+// 1e-5 to 0.2; the probe-0 and tunnel meshes that broke it, 1e-29 to 1e-41), or when GMRES with it
+// breaks down or does not converge.
+const double kPivotCollapse = 1e-10;
+const double kPreMin = 1e-3;
+// Collocation points closer than this (A), on triangles with opposite normals, are reported with
+// such a breakdown (meshcheck.h).
+const double kClose = 0.05;
 
 std::deque<std::string> g_log;
 
@@ -92,6 +102,8 @@ struct Solver {
    Mats<float> f;
    bool direct = false;
    double eps = 0, tol = 0;
+   double eps_pre = 0;     // GMRES: the preconditioner's eps now
+   bool reported = false;  // the mesh's defects have been logged
    int restart = kRestart, maxsteps = kMaxSteps;
 };
 
@@ -107,6 +119,13 @@ Mats<float>& mats<float>( Solver& s ) {
 }
 
 std::unique_ptr<Solver> g;
+
+// The normal-field deflation: gamma[k] for surface k; comp, the surface of each triangle in tree
+// order, is empty for one surface.
+struct Deflation {
+   std::vector<double> gamma;
+   std::vector<int> comp;
+};
 
 // Memory per triangle in KB, fitted to the prototype's runs on sesmesh meshes of lysozyme
 // (30,000 to 1,000,000 triangles): the H-matrix at eps 1e-4 takes -33 + 15.8 ln N, at 1e-6
@@ -193,9 +212,142 @@ void say_memory() {
         gb( double( peak_rss() ) ), gb( double( mem_available() ) ) );
 }
 
+// The triangle (BEST's numbering, from 1) of an unknown in tree order.
+int tri( const Solver& s, int row ) { return row >= 0 ? s.ct.perm[ row / 3 ] + 1 : 0; }
+
+// Logs, once, the features of the mesh that make GR ill-conditioned (meshcheck.h).
+void report_mesh( Solver& s ) {
+   if ( s.reported ) {
+      return;
+   }
+   s.reported = true;
+   const MeshDefects d = mesh_defects( s.mesh, s.K->x(), kClose );
+   say( "mesh: smallest angle %.2g deg (triangle %d); %ld triangles with an angle below 1 deg", d.min_angle,
+        d.min_angle_tri + 1, d.n_sliver );
+   if ( d.n_close > 0 ) {
+      say( "mesh: %ld pairs of triangles with opposite normals have collocation points closer than %.2f A (closest "
+           "%.2g A: triangles %d and %d)",
+           d.n_close, kClose, d.close_min, d.close_a + 1, d.close_b + 1 );
+   } else {
+      say( "mesh: no two triangles with opposite normals have collocation points closer than %.2f A", kClose );
+   }
+   say( "mesh: slivers folded onto their neighbors and sheets facing each other across narrow gaps make GR "
+        "ill-conditioned; probe-0 surfaces and narrow tunnels have them, smoother meshes (a larger probe radius, "
+        "tunnels closed) do not" );
+}
+
+// The factorization's profile line.
+void say_profile( double cpu0 ) {
+   long lrc = 0;
+   double lrs = 0;
+   lowrank_stats( lrc, lrs, true );
+   say( "factorization: %.0f CPU s, %ld truncations taking %.0f CPU s; by site: %s", cpu_seconds() - cpu0, lrc, lrs,
+        HMatrix::profile( true ).c_str() );
+}
+
+void reset_profile() {
+   long lrc = 0;
+   double lrs = 0;
+   lowrank_stats( lrc, lrs, true );
+   HMatrix::profile( true );
+}
+
+// -hlu: the H-LU factorization of the H-matrix at eps, in place.
+template <class Elt>
+int factor_direct( Solver& s ) {
+   const int n = s.mesh.n;
+   Mats<Elt>& m = mats<Elt>( s );
+   reset_profile();
+   const double cpu0 = cpu_seconds(), t = now();
+   double piv = 0;
+   try {
+      piv = m.H->lu( s.eps );
+   } catch ( const ZeroPivot& z ) {
+      report_mesh( s );
+      say( "error: H-LU: %s pivot at triangle %d; without -hlu BEST solves by GMRES, refining its preconditioner as "
+           "needed",
+           z.finite ? "a zero" : "a NaN or Inf", tri( s, z.row ) );
+      return 1;
+   }
+   say_stats( "H-LU factors", *m.H, n, now() - t );
+   say( "H-LU: eps %.0e, smallest pivot ratio %.2e (triangle %d)", s.eps, piv, tri( s, HMatrixT<Elt>::pivot_row() ) );
+   say_profile( cpu0 );
+   trim();
+   say_memory();
+   if ( !( piv >= kPivotCollapse ) ) {
+      report_mesh( s );
+      say( "error: H-LU: the factorization broke down (smallest pivot ratio %.2e); without -hlu BEST solves by GMRES, "
+           "refining its preconditioner as needed",
+           piv );
+      return 1;
+   }
+   return 0;
+}
+
+// GMRES: builds the preconditioner, the H-LU of a copy of the H-matrix at s.eps_pre with the near
+// field compressed too.  Returns 0; 1 if its smallest pivot ratio is below kPivotCollapse; 2 if a
+// pivot was 0 or not finite (the factors are then unusable).
+template <class Elt>
+int build_pre( Solver& s ) {
+   const int n = s.mesh.n;
+   Mats<Elt>& m = mats<Elt>( s );
+   m.P.reset();
+   trim();
+   reset_profile();
+   const double cpu0 = cpu_seconds(), t = now();
+   m.P = std::make_unique<HMatrixT<Elt>>( m.H->copy( s.eps_pre, true ) );
+   int st = 0;
+   try {
+      const double piv = m.P->lu( s.eps_pre );
+      say_stats( "GMRES preconditioner (H-LU factors)", *m.P, n, now() - t );
+      say( "GMRES preconditioner: eps %.0e, near field compressed, smallest pivot ratio %.2e (triangle %d); GMRES(%d) "
+           "to a relative residual of %.0e",
+           s.eps_pre, piv, tri( s, HMatrixT<Elt>::pivot_row() ), s.restart, s.tol );
+      if ( !( piv >= kPivotCollapse ) ) {
+         say( "GMRES preconditioner: broke down (smallest pivot ratio below %.0e)", kPivotCollapse );
+         st = 1;
+      }
+   } catch ( const ZeroPivot& z ) {
+      say( "GMRES preconditioner: eps %.0e, near field compressed: broke down, %s pivot at triangle %d", s.eps_pre,
+           z.finite ? "a zero" : "a NaN or Inf", tri( s, z.row ) );
+      st = 2;
+   }
+   say_profile( cpu0 );
+   trim();
+   say_memory();
+   return st;
+}
+
+// GMRES: moves the preconditioner to an eps 10 times smaller, unless it is at kPreMin already or the
+// memory for it is not available (then it says so and returns false, and the old one stays).  Logs
+// the mesh's defects the first time.
+template <class Elt>
+bool finer( Solver& s ) {
+   report_mesh( s );
+   if ( s.eps_pre <= kPreMin * 1.001 ) {
+      return false;
+   }
+   const double next = s.eps_pre / 10;
+   // At 1e-3 the preconditioner took 0.73 times the H-matrix's memory on a probe-0 lysozyme mesh; at
+   // 1e-2 less.  The H-matrix is there already, and the old preconditioner goes first.
+   const HMatrixT<Elt>& H = *mats<Elt>( s ).H;
+   const double need = ( next < 5e-3 ? 1.0 : 0.5 ) * 1.3 * H.stats().bytes();
+   const HMatrixT<Elt>* P = mats<Elt>( s ).P.get();
+   const double avail = double( mem_available() ) + ( P ? P->stats().bytes() : 0.0 );
+   if ( avail > 0 && need > avail && env_double( "BEST_HMATRIX_MEMCHECK", 1 ) != 0 ) {
+      say( "GMRES preconditioner: one at eps %.0e would need about %.1f GB, %.1f GB available (set "
+           "BEST_HMATRIX_MEMCHECK=0 to try anyway)",
+           next, gb( need ), gb( avail ) );
+      return false;
+   }
+   say( "GMRES preconditioner: rebuilding it at eps %.0e", next );
+   s.eps_pre = next;
+   return true;
+}
+
 // bhm_build after the cluster tree and the memory check, with the blocks in Elt.
 template <class Elt>
-int build_t( Solver& s, double eps, double eps_pre, double gdef, const double* xmu ) {
+int build_t( Solver& s, double eps, double eps_pre, const Deflation& def, const double* xmu ) {
    const int n = s.mesh.n, n3 = 3 * n;
    Mats<Elt>& m = mats<Elt>( s );
    HOptions opt;
@@ -206,37 +358,47 @@ int build_t( Solver& s, double eps, double eps_pre, double gdef, const double* x
    m.H = std::make_unique<HMatrixT<Elt>>( HMatrixT<Elt>::build( s.ct, *s.K, opt, &calls ) );
    std::vector<double> mt( n3 );
    to_tree( s.ct, xmu, 1, mt.data() );
-   m.H->add_rank1( gdef, mt.data(), mt.data() );
+   if ( def.comp.empty() ) {
+      m.H->add_rank1( def.gamma[ 0 ], mt.data(), mt.data() );
+   } else {
+      m.H->add_deflation( def.gamma, def.comp, mt.data() );
+   }
    say_stats( "H-matrix", *m.H, n, now() - t );
    say( "H-matrix: eps %.0e, eta %.1f, %.3g kernel blocks per N^2, %s precision", eps, kEta,
         double( calls ) / ( double( n ) * n ), s.single ? "single" : "double" );
    trim();
    say_memory();
 
-   long lrc = 0;
-   double lrs = 0;
-   lowrank_stats( lrc, lrs, true );
-   HMatrix::profile( true );
-   const double cpu0 = cpu_seconds();
-   t = now();
    if ( s.direct ) {
-      const double piv = m.H->lu( eps );
-      say_stats( "H-LU factors", *m.H, n, now() - t );
-      say( "H-LU: eps %.0e, smallest pivot ratio %.2e", eps, piv );
-   } else {
-      m.P = std::make_unique<HMatrixT<Elt>>( m.H->copy( eps_pre, true ) );
-      const double piv = m.P->lu( eps_pre );
-      say_stats( "GMRES preconditioner (H-LU factors)", *m.P, n, now() - t );
-      say( "GMRES preconditioner: eps %.0e, near field compressed, smallest pivot ratio %.2e; GMRES(%d) to a "
-           "relative residual of %.0e",
-           eps_pre, piv, s.restart, s.tol );
+      return factor_direct<Elt>( s );
    }
-   lowrank_stats( lrc, lrs, true );
-   say( "factorization: %.0f CPU s, %ld truncations taking %.0f CPU s; by site: %s", cpu_seconds() - cpu0, lrc, lrs,
-        HMatrix::profile( true ).c_str() );
-   trim();
-   say_memory();
-   return 0;
+   // GMRES: the preconditioner, finer while it breaks down.
+   s.eps_pre = eps_pre;
+   for ( ;; ) {
+      const int st = build_pre<Elt>( s );
+      if ( st == 0 ) {
+         return 0;
+      }
+      if ( !finer<Elt>( s ) ) {
+         // At the finest level a small pivot ratio may still do; a zero pivot may not.
+         if ( st == 2 ) {
+            say( "error: the GMRES preconditioner broke down at eps %.0e", s.eps_pre );
+            return 1;
+         }
+         return 0;
+      }
+   }
+}
+
+// True if every solution is finite; otherwise says so.
+bool finite( const std::vector<double>& X ) {
+   for ( double x : X ) {
+      if ( !std::isfinite( x ) ) {
+         say( "error: the solution is not finite (NaN or Inf)" );
+         return false;
+      }
+   }
+   return true;
 }
 
 // bhm_solve with the blocks in Elt: Bt holds the right-hand sides in tree order, and the solutions
@@ -249,42 +411,63 @@ int solve_t( Solver& s, int nrhs, std::vector<double>& Bt ) {
    if ( s.direct ) {
       m.H->lu_solve( Bt.data(), n3, nrhs );
       say( "solve: %d right-hand sides with the H-LU factors, %.2f s", nrhs, now() - t );
-      return 0;
+      return finite( Bt ) ? 0 : 1;
    }
    std::vector<double> Xt( size_t( n3 ) * nrhs );
    const HMatrixT<Elt>& H = *m.H;
-   const HMatrixT<Elt>& P = *m.P;
-   double ta = 0, tm = 0;
-   int na = 0, nm = 0;
-   Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) {
-      const double t0 = now();
-      H.matvec( X, ldx, q, Y, ldy );
-      ta += now() - t0;
-      na += q;
-   };
-   Precond M = [&]( double* X, int ldx, int q ) {
-      const double t0 = now();
-      P.lu_solve( X, ldx, q );
-      tm += now() - t0;
-      nm += q;
-   };
-   const GmresResult r = gmres( n3, nrhs, A, M, Bt.data(), n3, Xt.data(), n3, s.tol, s.restart, s.maxsteps );
-   Bt.swap( Xt );
-   int imin = 1 << 30, imax = 0;
-   double worst = 0;
-   for ( int c = 0; c < nrhs; ++c ) {
-      imin = std::min( imin, r.iters[ c ] );
-      imax = std::max( imax, r.iters[ c ] );
-      worst = std::max( worst, r.relres[ c ] );
+   for ( ;; ) {
+      const HMatrixT<Elt>& P = *m.P;
+      const double t1 = now();
+      double ta = 0, tm = 0;
+      int na = 0, nm = 0;
+      Apply A = [&]( const double* X, int ldx, int q, double* Y, int ldy ) {
+         const double t0 = now();
+         H.matvec( X, ldx, q, Y, ldy );
+         ta += now() - t0;
+         na += q;
+      };
+      Precond M = [&]( double* X, int ldx, int q ) {
+         const double t0 = now();
+         P.lu_solve( X, ldx, q );
+         tm += now() - t0;
+         nm += q;
+      };
+      const GmresResult r = gmres( n3, nrhs, A, M, Bt.data(), n3, Xt.data(), n3, s.tol, s.restart, s.maxsteps );
+      int imin = 1 << 30, imax = 0;
+      double worst = 0;
+      for ( int c = 0; c < nrhs; ++c ) {
+         imin = std::min( imin, r.iters[ c ] );
+         imax = std::max( imax, r.iters[ c ] );
+         // Not std::max, which would pass over a NaN; a NaN stays.
+         if ( std::isnan( r.relres[ c ] ) || r.relres[ c ] > worst ) {
+            worst = r.relres[ c ];
+         }
+      }
+      say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s "
+           "(products %.2f s for %d vectors, preconditioner %.2f s for %d)",
+           nrhs, imin, imax, worst, now() - t1, ta, na, tm, nm );
+      if ( worst <= s.tol ) {
+         Bt.swap( Xt );
+         return finite( Bt ) ? 0 : 1;
+      }
+      if ( r.broke ) {
+         say( "GMRES broke down: the residual grew instead of shrinking (the preconditioner is ill-conditioned)" );
+      }
+      // Again with a finer preconditioner, as long as there is one.
+      bool again = false;
+      while ( finer<Elt>( s ) ) {
+         const int st = build_pre<Elt>( s );
+         if ( st == 0 || ( st == 1 && s.eps_pre <= kPreMin * 1.001 ) ) {
+            again = true;
+            break;
+         }
+      }
+      if ( !again ) {
+         say( "error: GMRES did not reach a relative residual of %.0e in %d steps%s", s.tol, s.maxsteps,
+              r.broke ? " (it broke down)" : "" );
+         return 1;
+      }
    }
-   say( "solve: %d right-hand sides by GMRES, %d to %d iterations, largest relative residual %.1e, %.2f s "
-        "(products %.2f s for %d vectors, preconditioner %.2f s for %d)",
-        nrhs, imin, imax, worst, now() - t, ta, na, tm, nm );
-   if ( !( worst <= s.tol ) ) {
-      say( "error: GMRES did not reach a relative residual of %.0e in %d steps", s.tol, s.maxsteps );
-      return 1;
-   }
-   return 0;
 }
 
 }  // namespace
@@ -352,7 +535,8 @@ void bhm_entries( int i0, int m, int j0, int nc, double* a, int lda ) {
 
 double bhm_diag_mean( void ) { return g->K->diag_mean(); }
 
-int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single ) {
+int bhm_build( double eps, int direct, double eps_pre, int ndef, const double* gdef, const int* comp, const double* xmu,
+               int single ) {
    return guarded( [&] {
       Solver& s = *g;
       const int n = s.mesh.n;
@@ -360,6 +544,7 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
       s.single = single != 0;
       s.eps = eps;
       s.tol = env_double( "BEST_HMATRIX_GMRES_TOL", kTolFactor * eps );
+      eps_pre = env_double( "BEST_HMATRIX_PRE_EPS", eps_pre );
       // The H-LU forks for blocks of at least this many leaf clusters a side.
       HMatrix::set_fork( int( env_double( "BEST_HMATRIX_FORK", kForkLeaves ) ) );
       double t = now();
@@ -377,7 +562,15 @@ int bhm_build( double eps, int direct, double eps_pre, double gdef, const double
                             : "-hs (single precision) needs about half" );
          return 1;
       }
-      return s.single ? build_t<float>( s, eps, eps_pre, gdef, xmu ) : build_t<double>( s, eps, eps_pre, gdef, xmu );
+      Deflation def;
+      def.gamma.assign( gdef, gdef + std::max( 1, ndef ) );
+      if ( ndef > 1 ) {
+         def.comp.resize( n );
+         for ( int p = 0; p < n; ++p ) {
+            def.comp[ p ] = comp[ s.ct.perm[ p ] ] - 1;  // tree order, from 0
+         }
+      }
+      return s.single ? build_t<float>( s, eps, eps_pre, def, xmu ) : build_t<double>( s, eps, eps_pre, def, xmu );
    } );
 }
 
