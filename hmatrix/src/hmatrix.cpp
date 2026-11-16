@@ -11,6 +11,7 @@
 #include <mutex>
 #include <stdexcept>
 
+#include "memory.h"
 #include "parallel.h"
 
 namespace bh {
@@ -323,7 +324,11 @@ void HMatrixT<Elt>::fill( const Kernel& K, const HOptions& opt, const std::vecto
                      []( const Block* a, const Block* b ) { return double( a->nr ) * a->nc > double( b->nr ) * b->nc; } );
    std::vector<long> calls( threads(), 0 );
    const ClusterTree& ct = *ct_;
-   parallel_for( long( order.size() ), [&]( long i, int thread ) { fill_leaf( order[ i ], ct, K, opt, calls[ thread ] ); } );
+   parallel_for( long( order.size() ), [&]( long i, int thread ) {
+      if ( !memory_low() ) {
+         fill_leaf( order[ i ], ct, K, opt, calls[ thread ] );
+      }
+   } );
    if ( kernel_calls ) {
       for ( long c : calls ) {
          *kernel_calls += c;
@@ -373,6 +378,9 @@ HMatrixT<Elt> HMatrixT<Elt>::copy( double eps, bool near ) const {
    HMatrixT h( *ct_, copy_block( root_.get() ) );
    // Same structure, so the leaves are in the same order.
    parallel_for( long( leaves_.size() ), [&]( long i, int ) {
+      if ( memory_low() ) {
+         return;
+      }
       const Block* s = leaves_[ i ];
       Block* d = h.leaves_[ i ];
       if ( s->type == BType::D ) {
@@ -804,6 +812,9 @@ void product_lowrank( const BlockT<Elt>* A, const BlockT<Elt>* B, double eps, Ma
 // C += alpha A B, A (r,k), B (k,c), C (r,c), all at one level.
 template <class Elt>
 void addmul( BlockT<Elt>* C, double alpha, const BlockT<Elt>* A, const BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    if ( C->type == BType::D ) {
       if ( A->type == BType::R ) {
          const int ka = A->rank();
@@ -850,6 +861,9 @@ void addmul( BlockT<Elt>* C, double alpha, const BlockT<Elt>* A, const BlockT<El
 // B <- L^-1 B, L (t,t) unit lower, B (t,s).
 template <class Elt>
 void trsm_ll( const BlockT<Elt>* L, BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
@@ -875,6 +889,9 @@ void trsm_ll( const BlockT<Elt>* L, BlockT<Elt>* B, double eps ) {
 // B <- B U^-1, U (s,s) upper, B (t,s).
 template <class Elt>
 void trsm_ur( const BlockT<Elt>* U, BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
@@ -931,6 +948,9 @@ void getrf_nopiv( Mat& A ) {
 
 template <class Elt>
 void hlu_block( BlockT<Elt>* A, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( A, eps );
    if ( A->type == BType::D ) {
       in_double( A->D, []( Mat& W ) { getrf_nopiv( W ); } );
@@ -977,6 +997,9 @@ double HMatrixT<Elt>::lu( double eps ) {
    g_piv_min = 1e300;
    g_piv_max = 0;
    hlu_block( root_.get(), eps );
+   if ( memory_low() ) {
+      return 0;
+   }
    // Every H block was flushed when the factorization reached it; check, and flush any left.
    long left = 0;
    std::vector<Block*> stack = { root_.get() };

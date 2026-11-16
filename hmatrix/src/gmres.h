@@ -16,11 +16,13 @@ struct GmresResult {
    std::vector<int> iters;      // iterations per column
    std::vector<double> relres;  // final true relative residual |b - A x| / |b| per column
    int steps = 0;               // batched applications of A M^-1
+   bool stopped = false;        // stopped early because memory_low() (memory.h)
 };
 
 // Solves A X = B (n x p) by GMRES(m) with right preconditioning, X starting at zero.  The columns
 // run in lockstep so that A and M^-1 are applied to all unconverged columns at once.  A column stops
 // when its residual estimate is at most tol |b|; the true residual is checked at each restart.
+// Stops early, with stopped set, once memory_low().
 GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const double* B, int ldb, double* X, int ldx,
                    double tol, int m, int maxit );
 

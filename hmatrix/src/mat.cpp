@@ -172,15 +172,23 @@ size_t proc_status_kb( const char* key ) {
 size_t peak_rss() { return proc_status_kb( "VmHWM:" ) * 1024; }
 size_t current_rss() { return proc_status_kb( "VmRSS:" ) * 1024; }
 
-size_t mem_available() {
+namespace {
+
+size_t meminfo_kb( const char* key ) {
    std::ifstream in( "/proc/meminfo" );
    std::string line;
+   const size_t len = std::strlen( key );
    while ( std::getline( in, line ) ) {
-      if ( line.compare( 0, 13, "MemAvailable:" ) == 0 ) {
-         return size_t( std::strtoull( line.c_str() + 13, nullptr, 10 ) ) * 1024;
+      if ( line.compare( 0, len, key ) == 0 ) {
+         return size_t( std::strtoull( line.c_str() + len, nullptr, 10 ) );
       }
    }
    return 0;
 }
+
+}  // namespace
+
+size_t mem_available() { return meminfo_kb( "MemAvailable:" ) * 1024; }
+size_t mem_total() { return meminfo_kb( "MemTotal:" ) * 1024; }
 
 }  // namespace bh
