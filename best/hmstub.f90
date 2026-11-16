@@ -38,12 +38,13 @@ real(c_double) function bhm_diag_mean() bind(C, name='bhm_diag_mean')
    bhm_diag_mean = 0
 end function bhm_diag_mean
 
-integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu, single, nrhs) bind(C, name='bhm_build')
+integer(c_int) function bhm_build(eps, direct, eps_pre, ndef, gdef, comp, xmu, single, nrhs) bind(C, name='bhm_build')
    use, intrinsic :: iso_c_binding
    implicit none
-   real(c_double), value :: eps, eps_pre, gdef
-   integer(c_int), value :: direct, single, nrhs
-   real(c_double), intent(in) :: xmu(*)
+   real(c_double), value :: eps, eps_pre
+   integer(c_int), value :: direct, ndef, single, nrhs
+   real(c_double), intent(in) :: gdef(*), xmu(*)
+   integer(c_int), intent(in) :: comp(*)
    bhm_build = 1
 end function bhm_build
 

@@ -68,11 +68,13 @@ module besolve
       real(c_double) function bhm_diag_mean() bind(C, name='bhm_diag_mean')
          import :: c_double
       end function bhm_diag_mean
-      integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu, single, nrhs) bind(C, name='bhm_build')
+      integer(c_int) function bhm_build(eps, direct, eps_pre, ndef, gdef, comp, xmu, single, nrhs) &
+            bind(C, name='bhm_build')
          import :: c_int, c_double
-         real(c_double), value :: eps, eps_pre, gdef
-         integer(c_int), value :: direct, single, nrhs
-         real(c_double), intent(in) :: xmu(*)
+         real(c_double), value :: eps, eps_pre
+         integer(c_int), value :: direct, ndef, single, nrhs
+         real(c_double), intent(in) :: gdef(*), xmu(*)
+         integer(c_int), intent(in) :: comp(*)
       end function bhm_build
       integer(c_int) function bhm_solve(nrhs, b) bind(C, name='bhm_solve')
          import :: c_int, c_double
@@ -142,14 +144,16 @@ contains
    ! solver's own.  HEPS is the H-matrix accuracy; IHLU = 1 asks for the
    ! direct H-LU solver instead of GMRES; IVISCO = 1 (-v, -vc) has BESOLV solve
    ! VISCO's strain flows with DIFCO's; IHS = 1 (-hs) stores the blocks in
-   ! single precision.
-   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu, ivisco, ihs)
-      integer, intent(in) :: nar, ihlu, ivisco, ihs
+   ! single precision.  NDEF is the number of separate closed surfaces deflated
+   ! on their own, ICOMP the surface of each triangle (COMPON; all 1 if NDEF = 1).
+   subroutine hmprep(nar, afac, cg, v1, v2, v3, x, area, outfnm2, heps, ihlu, ivisco, ihs, ndef, icomp)
+      integer, intent(in) :: nar, ihlu, ivisco, ihs, ndef, icomp(nar)
       real, intent(in) :: afac, cg, heps
       real, intent(in) :: v1(nar,3), v2(nar,3), v3(nar,3), area(nar)
       real, intent(out) :: x(nar,3)
       character(len=*), intent(in) :: outfnm2
-      real, allocatable :: xmu(:)
+      real, allocatable :: xmu(:), gdefk(:)
+      integer(c_int), allocatable :: comp(:)
       real :: a(9,9), xmu2, diagm, gdef
       real :: v21x, v21y, v21z, v31x, v31y, v31z, xnx, xny, xnz, xnl
       integer :: n, j, m, info, nrhs
@@ -203,8 +207,17 @@ contains
       end do
       diagm = bhm_diag_mean()
       gdef = diagm/xmu2
+      allocate(gdefk(ndef), comp(nar))
+      comp = icomp
       write(12,*) 'normal-field deflation: mean diagonal of GR = ', diagm
-      write(12,*) ' added GDEF*XMU*XMU^T to GR, GDEF = ', gdef
+      if (ndef == 1) then
+         gdefk(1) = gdef
+         write(12,*) ' added GDEF*XMU*XMU^T to GR, GDEF = ', gdef
+      else
+         call defgam(nar, ndef, icomp, xmu, diagm, gdefk)
+         write(12,*) ' added GDEF(K)*XMU(K)*XMU(K)^T to GR for each surface K, GDEF(K) from ', &
+            minval(gdefk), ' to ', maxval(gdefk)
+      end if
       write(12,*) ' '
       if (ihlu == 1) then
          write(12,*) 'H-matrix solver, direct H-LU, eps = ', heps
@@ -217,10 +230,10 @@ contains
       ! BESOLV solves for at most 11 right-hand sides at once with -v or -vc, 6 without.
       nrhs = 6
       if (ivisco == 1) nrhs = 11
-      info = bhm_build(heps, ihlu, epspre, gdef, xmu, ihs, nrhs)
+      info = bhm_build(heps, ihlu, epspre, ndef, gdefk, comp, xmu, ihs, nrhs)
       call hmlog()
       if (info /= 0) call hmstop('the H-matrix could not be built')
-      deallocate(xmu)
+      deallocate(xmu, gdefk, comp)
       hm = .true.
       hmvisc = ivisco == 1
       hmx = x

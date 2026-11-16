@@ -1,0 +1,9 @@
+# BEST on examples/best/1aki49_atom_01806 with -v -mw 5000 (branch robust-solve, gfortran -O2, OpenBLAS).
+# Two closed surfaces: the probe-0 surface of 49 atoms of lysozyme (1AKI, around 34.05 23.27 -12.34)
+# and one more atom (a copy of the first, 12 A along -x), meshed by sesmesh -p 0 -g 1.4.  With one
+# normal-field deflation for all triangles (main 854c16d) D_t came out negative (-0.77848E-05).
+# value  relative-tolerance  label in the .be file
+0.32649E-05   2e-4  1/3 Trace DTT(EXACT)
+0.51482E+09   2e-4  1/3 Trace DRR(EXACT)
+0.443137E+01  2e-4  CHI
+0.355926E+00  2e-4  ETA (cm^3/g)

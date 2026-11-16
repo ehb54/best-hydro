@@ -8,6 +8,7 @@
 #include <string>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 
@@ -494,6 +495,7 @@ double g_fork_min = 0;          // fork only for blocks with at least this many 
 int g_fork_leaves = 8;          // ... (g_fork_leaves leaf clusters)^2
 std::mutex g_piv_m;
 double g_piv_min = 1e300, g_piv_max = 0;
+int g_piv_row = -1;  // where g_piv_min was seen (unknown, tree order)
 
 template <class A, class B>
 void par2( bool doit, A&& a, B&& b ) {
@@ -916,15 +918,23 @@ void trsm_ur( const BlockT<Elt>* U, BlockT<Elt>* B, double eps ) {
    }
 }
 
-void getrf_nopiv( Mat& A ) {
+// A diagonal leaf (unknowns r0 .. r0 + A.m - 1, tree order).
+void getrf_nopiv( Mat& A, int r0 ) {
    const int n = A.m;
    double pmin = 1e300, pmax = 0;
+   int kmin = 0;
    for ( int k = 0; k < n; ++k ) {
       const double p = A( k, k );
-      pmin = std::min( pmin, std::fabs( p ) );
+      if ( !std::isfinite( p ) ) {
+         throw ZeroPivot( r0 + k, false );
+      }
+      if ( std::fabs( p ) < pmin ) {
+         pmin = std::fabs( p );
+         kmin = k;
+      }
       pmax = std::max( pmax, std::fabs( p ) );
       if ( p == 0 ) {
-         throw std::runtime_error( "H-LU: zero pivot" );
+         throw ZeroPivot( r0 + k, true );
       }
       const double inv = 1.0 / p;
       for ( int i = k + 1; i < n; ++i ) {
@@ -942,7 +952,10 @@ void getrf_nopiv( Mat& A ) {
       }
    }
    std::lock_guard<std::mutex> lk( g_piv_m );
-   g_piv_min = std::min( g_piv_min, pmin );
+   if ( pmin < g_piv_min ) {
+      g_piv_min = pmin;
+      g_piv_row = r0 + kmin;
+   }
    g_piv_max = std::max( g_piv_max, pmax );
 }
 
@@ -953,7 +966,8 @@ void hlu_block( BlockT<Elt>* A, double eps ) {
    }
    flush( A, eps );
    if ( A->type == BType::D ) {
-      in_double( A->D, []( Mat& W ) { getrf_nopiv( W ); } );
+      const int r0 = A->r0;
+      in_double( A->D, [r0]( Mat& W ) { getrf_nopiv( W, r0 ); } );
       return;
    }
    if ( A->type != BType::H ) {
@@ -996,6 +1010,7 @@ double HMatrixT<Elt>::lu( double eps ) {
    g_fork_min = ( g_fork_leaves * leafdofs ) * ( g_fork_leaves * leafdofs );
    g_piv_min = 1e300;
    g_piv_max = 0;
+   g_piv_row = -1;
    hlu_block( root_.get(), eps );
    if ( memory_low() ) {
       return 0;
@@ -1020,6 +1035,11 @@ double HMatrixT<Elt>::lu( double eps ) {
       std::fprintf( stderr, "H-LU: %ld blocks still had pending updates\n", left );
    }
    return g_piv_max > 0 ? g_piv_min / g_piv_max : 0;
+}
+
+template <class Elt>
+int HMatrixT<Elt>::pivot_row() {
+   return g_piv_row;
 }
 
 template <class Elt>
@@ -1048,6 +1068,57 @@ void HMatrixT<Elt>::add_rank1( double gamma, const double* u, const double* v ) 
          store( b->U, std::move( Un ) );
          store( b->V, std::move( Vn ) );
       }
+   } );
+}
+
+template <class Elt>
+void HMatrixT<Elt>::add_deflation( const std::vector<double>& gamma, const std::vector<int>& comp, const double* u ) {
+   parallel_for( long( leaves_.size() ), [&]( long i, int ) {
+      Block* b = leaves_[ i ];
+      // The surfaces of the block's row and column triangles (unknown r: triangle r / 3).
+      auto surfaces = [&]( int u0, int nu ) {
+         std::vector<int> s;
+         for ( int t = u0 / 3; t < ( u0 + nu ) / 3; ++t ) {
+            s.push_back( comp[ t ] );
+         }
+         std::sort( s.begin(), s.end() );
+         s.erase( std::unique( s.begin(), s.end() ), s.end() );
+         return s;
+      };
+      const std::vector<int> sr = surfaces( b->r0, b->nr ), sc = surfaces( b->c0, b->nc );
+      std::vector<int> both;
+      std::set_intersection( sr.begin(), sr.end(), sc.begin(), sc.end(), std::back_inserter( both ) );
+      if ( both.empty() ) {
+         return;
+      }
+      const double* ur = u + b->r0;
+      const double* vc = u + b->c0;
+      if ( b->type == BType::D ) {
+         for ( int j = 0; j < b->nc; ++j ) {
+            const int kj = comp[ ( b->c0 + j ) / 3 ];
+            for ( int r = 0; r < b->nr; ++r ) {
+               if ( comp[ ( b->r0 + r ) / 3 ] == kj ) {
+                  b->D( r, j ) += gamma[ kj ] * ur[ r ] * vc[ j ];
+               }
+            }
+         }
+         return;
+      }
+      const int k0 = b->rank(), nb = int( both.size() );
+      Mat Un( b->nr, k0 + nb ), Vn( b->nc, k0 + nb );
+      std::copy( b->U.a.begin(), b->U.a.end(), Un.a.begin() );
+      std::copy( b->V.a.begin(), b->V.a.end(), Vn.a.begin() );
+      for ( int q = 0; q < nb; ++q ) {
+         const int k = both[ q ];
+         for ( int r = 0; r < b->nr; ++r ) {
+            Un( r, k0 + q ) = comp[ ( b->r0 + r ) / 3 ] == k ? gamma[ k ] * ur[ r ] : 0.0;
+         }
+         for ( int r = 0; r < b->nc; ++r ) {
+            Vn( r, k0 + q ) = comp[ ( b->c0 + r ) / 3 ] == k ? vc[ r ] : 0.0;
+         }
+      }
+      store( b->U, std::move( Un ) );
+      store( b->V, std::move( Vn ) );
    } );
 }
 

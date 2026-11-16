@@ -157,7 +157,8 @@ c      results.  The area correction should be used for such precise work (that 
 c      the Connolly precise surface area.)
 
        USE BESOLVE, ONLY: GR, IPIV, HMAVAIL, HMPREP, NHMAT
-       REAL,DIMENSION(:),ALLOCATABLE :: AREA, XMU
+       REAL,DIMENSION(:),ALLOCATABLE :: AREA, XMU, GDEFK
+       INTEGER,DIMENSION(:),ALLOCATABLE :: ICOMP
        REAL,DIMENSION(:,:),ALLOCATABLE :: TQ, F, W, V1, V2, V3, X,
      $ B, V0
        REAL,DIMENSION(:,:,:),ALLOCATABLE :: G
@@ -170,6 +171,7 @@ c      the Connolly precise surface area.)
      $ URC(3),UDR(3)
        CHARACTER*80 INLINE,outfnm,outfnm2,INFNM,INFNM3,ARG
        character*16 datetime,datetime2,datetime3,ver
+       LOGICAL ALLFIN
        real Ktt(3,3),Ktr(3,3),Krt(3,3),Krr(3,3),Kttinv(3,3),tarray2,
      $ tarray3,tarray4
 
@@ -205,7 +207,7 @@ c      solver above that, unless -dn or -hm says otherwise.
        ALLOCATE(V1(NAR,3),V2(NAR,3),V3(NAR,3),X(NAR,3),
      $ AREA(NAR),V0(NAR3,5),F(NAR,3),B(NAR3,6),
      $ TQ(NAR,3),W(5,NAR3),G(NAR,5,3),H(NAR,5,3,3),
-     $ XMU(NAR3))
+     $ XMU(NAR3),ICOMP(NAR))
        IF(IHM.NE.1) ALLOCATE(GR(NAR3,NAR3),IPIV(NAR3))
                                                                                 
 c      read input file:
@@ -313,6 +315,26 @@ c      AREA CORRECTION
        endif
        write(12,*) 'total area (A^2) = ',totarea
        write(12,*) 'centroid coords = ',cx,cy,cz 
+
+c      The separate closed surfaces (COMPON), each deflated on its own below.
+c      NDEF is the number of deflation terms: NCOMP for a closed triangulation,
+c      otherwise 1 (as before 11/15/2026), with a warning.
+
+       CALL COMPON(NAR,V1,V2,V3,ICOMP,NCOMP,NOPEN)
+       NDEF = 1
+       IF(NOPEN.GT.0) THEN
+       write(12,'(1x,a,i0,2a)') 'warning: ',NOPEN,
+     $ ' edges are not shared by exactly two triangles (vertices',
+     $ ' matched by their coordinates as read): the surface is open'
+       IF(NCOMP.GT.1) write(12,'(1x,a,i0,2a)') 'surface: ',NCOMP,
+     $ ' connected parts; one normal-field deflation for all',
+     $ ' triangles'
+       ICOMP = 1
+       ELSE IF(NCOMP.GT.1) THEN
+       NDEF = NCOMP
+       write(12,'(1x,a,i0,2a)') 'surface: ',NCOMP,' separate closed',
+     $ ' surfaces; the normal field of each is deflated'
+       ENDIF
        write(12,*) ' '
        close(12)
 
@@ -320,7 +342,7 @@ c      With the H-matrix solver, HMPREP does all of II and III without forming G
 
        IF(IHM.EQ.1) THEN
        CALL HMPREP(NAR,AFAC,CG,V1,V2,V3,X,AREA,OUTFNM2,HEPS,IHLU,IVISCO,
-     $ IHS)
+     $ IHS,NDEF,ICOMP)
        ELSE
 
 c      II. CONSTRUCTION OF THE SUPER "G" MATRIX, GR
@@ -355,6 +377,9 @@ c      and leaves it otherwise unchanged.  GDEF*|XMU|^2 is the mean diagonal ent
 c      the added term is of the size of GR's own entries, far above the area correction's
 c      shift.  With GDEF ten times larger, D_t, CHI and [eta] change by 3e-8 or less and D_r
 c      by 2e-7 or less.
+c      11/15/2026 E. H. Brookes: A triangulation of NDEF separate closed surfaces has one
+c      such near-null vector per surface (COMPON).  Each gets its own term, with XMU
+c      restricted to that surface and GDEF(K)*|XMU(K)|^2 again the mean diagonal entry.
 
        xmu2 = 0.0
        diagm = 0.0
@@ -377,6 +402,7 @@ c      by 2e-7 or less.
        enddo
        diagm = diagm/nar3
        gdef = diagm/xmu2
+       IF(NDEF.EQ.1) THEN
 !$OMP PARALLEL DO PRIVATE(I,GDJ) SCHEDULE(STATIC)
        DO J=1,NAR3
        GDJ = GDEF*XMU(J)
@@ -385,8 +411,26 @@ c      by 2e-7 or less.
        ENDDO
        ENDDO
 !$OMP END PARALLEL DO
+       ELSE
+       ALLOCATE(GDEFK(NDEF))
+       CALL DEFGAM(NAR,NDEF,ICOMP,XMU,DIAGM,GDEFK)
+!$OMP PARALLEL DO PRIVATE(I,K,GDJ) SCHEDULE(STATIC)
+       DO J=1,NAR3
+       K = ICOMP((J+2)/3)
+       GDJ = GDEFK(K)*XMU(J)
+       DO I=1,NAR3
+       IF(ICOMP((I+2)/3).EQ.K) GR(I,J) = GR(I,J)+GDJ*XMU(I)
+       ENDDO
+       ENDDO
+!$OMP END PARALLEL DO
+       ENDIF
        write(12,*) 'normal-field deflation: mean diagonal of GR = ',diagm
+       IF(NDEF.EQ.1) THEN
        write(12,*) ' added GDEF*XMU*XMU^T to GR, GDEF = ',gdef
+       ELSE
+       write(12,*) ' added GDEF(K)*XMU(K)*XMU(K)^T to GR for each',
+     $ ' surface K, GDEF(K) from ',MINVAL(GDEFK),' to ',MAXVAL(GDEFK)
+       ENDIF
        write(12,*) ' '
        write(12,*) 'about to enter dgetrf'
        close(12)       
@@ -415,11 +459,11 @@ c      Test the variable info and abort if there is a problem.
        if(info.lt.0) then
        print *,"Parameter ",Abs(info)," had an illegal value"
        print *, "Computation Aborted."
-       STOP
+       STOP 1
        else
        print *,"Factor U(",info,info,")=0. U is singular."
        print *, "Computation Aborted."
-       STOP
+       STOP 1
        endif
        endif
 
@@ -436,6 +480,20 @@ C      V. CALCULATE THE VISCOSITY FACTOR IF REQUESTED
      $ CHIPRIME,AREA,X,ICOV,CG,B,INFO,G,H,W,V0)
 
 C      VI. OUTPUT
+c      Only finite results go to the .be file (11/15/2026): a NaN or Inf stops
+c      BEST with exit code 1 and a message, and the .be file stays empty.
+
+       IF(.NOT.(ALLFIN(9,DTT).AND.ALLFIN(9,DTR).AND.ALLFIN(9,DRR).AND.
+     $ ALLFIN(3,URC).AND.ALLFIN(3,UDR))) THEN
+       CALL NOTFIN(OUTFNM2,'the diffusion tensors')
+       ENDIF
+       IF(IVISCO.EQ.1) THEN
+       W1(1) = CHIPRIME
+       W1(2) = D1
+       W1(3) = D2
+       W1(4) = D3
+       IF(.NOT.ALLFIN(4,W1)) CALL NOTFIN(OUTFNM2,'the viscosity factor')
+       ENDIF
 
        CALL OUTPUT(OUTFNM,VER,IAREA,TRUEAREA,AFAC,TRUEVOL,MW,
      $ WM,NAR,CX,CY,CZ,URC,UDR,DTT,DTR,DRR,IVISCO,ICOV,D1,D2,D3,
