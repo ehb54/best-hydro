@@ -259,7 +259,7 @@ Work since `v4.0-aragon`:
   negative, with exit code 0. When the H-matrix solver's coarse preconditioner breaks down
   (probe-0 and tunnel meshes), BEST rebuilds it finer, and logs the mesh's folds and gaps.
   GMRES stops as soon as it breaks down, and BEST no longer writes NaN to the `.be` file. On
-  26 smooth lysozyme and pepsin meshes (probe 1.5 and 3, 29,000 to 238,000 triangles), the `.be`
+  32 smooth lysozyme and pepsin meshes (probe 1.5 and 3, 29,000 to 448,000 triangles), the `.be`
   files are unchanged, byte for byte (branch `robust-solve`).
 
 ## References
