@@ -10,6 +10,13 @@
 # optimization no higher than -O2.  Some source lines run past column 72, which
 # gfortran rejects by default, hence -ffixed-line-length-none.
 #
+# -ffp-contract=off keeps gfortran from fusing multiplies and adds where the
+# target has FMA instructions: arm64, and x86-64 where the compiler targets
+# x86-64-v3 by default (Ubuntu's amd64v3 packages do).  The results then do not
+# depend on the target: rcoal reproduces the author's meshes, and the H-matrix
+# solver's entries match TGETGR's bit for bit.  On plain x86-64 the flag
+# changes nothing.
+#
 # BEST fills its matrix with OpenMP threads (OMP_NUM_THREADS); the LAPACK
 # calls use the threads of the LAPACK/BLAS library (e.g. OPENBLAS_NUM_THREADS).
 #
@@ -24,7 +31,7 @@
 # After changing HMATRIX, run make clean first.
 
 FC     = gfortran
-FFLAGS = -O2
+FFLAGS = -O2 -ffp-contract=off
 R8     = -fdefault-real-8 -fdefault-double-8
 FIXED  = -ffixed-line-length-none
 OPENMP = -fopenmp
