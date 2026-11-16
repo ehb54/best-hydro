@@ -53,6 +53,20 @@ else
    bad "best: 2eu7_02562 -na -v -mw 30000 (see $d)"
 fi
 
+# BEST: two separate closed surfaces (the probe-0 surface of 49 lysozyme atoms
+# and one more atom 12 A away).  The normal field of each is a near-null vector
+# of GR, and each must be deflated on its own: with one term for all triangles,
+# D_t came out negative.
+d=$work/best-two; mkdir -p "$d"; cd "$d" || exit 1
+cp "$root/examples/best/1aki49_atom_01806" .
+if "$bin/best" -f 1aki49_atom_01806 -v -mw 5000 > best.out 2>&1 \
+   && grep -q "surface: 2 separate closed surfaces" 1aki49_atom_01806vm.log \
+   && perl "$t/check_best.pl" 1aki49_atom_01806vm.be "$t/expected_best_two.txt"; then
+   ok "best: two separate surfaces, each deflated (1aki49_atom_01806 -v -mw 5000)"
+else
+   bad "best: two separate surfaces, each deflated (1aki49_atom_01806 -v -mw 5000; see $d)"
+fi
+
 # The H-matrix solver's dense kernels (built with it only).
 if [ -x "$bin/hm_dense_test" ]; then
    "$bin/hm_dense_test" > "$work/hm_dense_test.out" 2>&1
@@ -104,6 +118,15 @@ else
       ok "best -hm -hlu -hs: 2eu7_02562 -v -mw 30000 agrees with the dense solver"
    else
       bad "best -hm -hlu -hs: 2eu7_02562 -v -mw 30000 should agree with the dense solver (see $d/hs-hlu)"
+   fi
+   # Two separate surfaces: the H-matrix solver deflates each, as the dense one does.
+   mkdir -p two
+   cp "$root/examples/best/1aki49_atom_01806" two/
+   if ( cd two && "$bin/best" -f 1aki49_atom_01806 -v -mw 5000 -hm > best.out 2>&1 ) \
+      && perl "$t/check_best_pair.pl" "$work/best-two/1aki49_atom_01806vm.be" two/1aki49_atom_01806vm.be 2e-5; then
+      ok "best -hm: two separate surfaces agree with the dense solver"
+   else
+      bad "best -hm: two separate surfaces should agree with the dense solver (see $d/two)"
    fi
 fi
 

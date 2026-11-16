@@ -44,12 +44,15 @@ void bhm_entries( int i0, int m, int j0, int nc, double* a, int lda );
 /* The mean of GR's diagonal entries, summed in the order BEST uses. */
 double bhm_diag_mean( void );
 
-/* Builds the H-matrix of GR + gdef xmu xmu^T at accuracy eps and prepares the solves: with
- * direct = 0 a preconditioner for GMRES (an H-LU factorization at eps_pre, with the near field
- * compressed too), with direct = 1 the H-LU factorization at eps.  xmu has 3n entries.  With
- * single = 1 the H-matrix and its factors are stored in single precision.  Returns 0, or nonzero
- * after queuing a message (for example when the memory needed is not available). */
-int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single );
+/* Builds the H-matrix of GR + sum_k gdef[k] xmu_k xmu_k^T at accuracy eps and prepares the
+ * solves: with direct = 0 a preconditioner for GMRES (an H-LU factorization at eps_pre, with the
+ * near field compressed too), with direct = 1 the H-LU factorization at eps.  xmu has 3n entries;
+ * xmu_k is its part on the triangles of surface k, where comp[i] (1 .. ndef) is the surface of
+ * triangle i (with ndef = 1, every triangle is on surface 1).  With single = 1 the H-matrix and
+ * its factors are stored in single precision.  Returns 0, or nonzero after queuing a message (for
+ * example when the memory needed is not available). */
+int bhm_build( double eps, int direct, double eps_pre, int ndef, const double* gdef, const int* comp, const double* xmu,
+               int single );
 
 /* Solves for nrhs right-hand sides at once: b is 3n x nrhs, column-major, and holds the
  * solutions on return.  Returns 0, or nonzero after queuing a message (GMRES did not converge). */

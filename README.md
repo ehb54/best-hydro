@@ -28,7 +28,7 @@ made since; see [Versions](#versions).
 | `rcoal/` | rcoal 2.0 (2007), for MSROLL triangulations |
 | `rcoal3/` | rcoal 3.0 (2012), which also reads MSMS triangulations |
 | `doc/` | the BEST Hydrodynamics Package manual, version 3.9 (2014) |
-| `examples/` | a sample BEST input, the rcoal 2.0 test case, and an rcoal 3.0 example (crambin, MSMS) |
+| `examples/` | two sample BEST inputs, the rcoal 2.0 test case, and an rcoal 3.0 example (crambin, MSMS) |
 
 `index.f` is a sort routine used only by Coalesce. It is in each directory, as
 distributed.
@@ -81,10 +81,21 @@ rescaling also kept BEST's matrix away from a near-singularity. BEST now removes
 near-singularity itself, so `-na`, and meshes whose own area is exact (such as sesmesh's),
 give sound results too.
 
+A triangulation may hold several separate closed surfaces, for example a molecule and a
+detached atom. Each surface brings its own near-singularity, and BEST removes each one. It
+finds the surfaces from the vertices the triangles share, and the `.log` says how many there
+are. If some edges do not belong to exactly two triangles, the surface is not closed. The
+`.log` then gives a warning, and BEST treats all the triangles as one surface, as before.
+
+If a result is not a finite number (NaN or Inf), BEST stops with an error and exit code 1,
+and writes nothing to the `.be` file.
+
 To try the examples, copy them to a scratch directory first, since the programs write
 their output next to their input:
 
 - `examples/best/2eu7_02562`: `best -f 2eu7_02562 -v -mw 30000` takes a minute or less.
+- `examples/best/1aki49_atom_01806`: two separate closed surfaces, made by sesmesh at probe 0.
+  One is 49 atoms of lysozyme, the other one more atom 12 Å away. `make test` uses it.
 - `examples/rcoal`: the `.his` files give the edge fraction of each output, so for
   example `rcoal -f test.c3p -e 0.8` reproduces `test_05770`.
 - `examples/rcoal3`: `rcoal3 -f 1crn.face -nmax 2500 -nmin 1500 -n 3 -s`.
@@ -178,6 +189,26 @@ Before it builds the matrix, BEST estimates the memory needed and stops with an 
 the node does not have that much available; `BEST_HMATRIX_MEMCHECK=0` turns the check
 off.
 
+**Rough meshes.** Probe-0 surfaces (unions of atom spheres) and meshes with narrow tunnels
+have two kinds of defect: sliver triangles folded onto their neighbors, and sheets facing each
+other across gaps of hundredths of an Å. Two collocation points that close, on triangles with
+opposite normals, make two rows of the matrix nearly the same. Each such pair gives a
+near-null mode: a stress trapped in the fold or gap. That stress exerts no net force, so the
+results hardly depend on it. On a 9,254-triangle probe-0 fragment of lysozyme, the dense
+solver, GMRES and the H-matrix at eps 1e-6 agreed to every printed digit.
+
+The coarse preconditioner breaks down on these meshes, though. Its smallest pivot ratio was
+1e-29 to 1e-41, where smooth meshes give 1e-5 to 0.2, and GMRES then diverged or the
+factorization hit a zero pivot. BEST now rebuilds the preconditioner at eps 1e-2 when that
+happens, and at 1e-3 if needed. It also does so when GMRES does not converge, or breaks down
+(its residual grows). A finer preconditioner takes more memory and time. On a
+60,540-triangle probe-0 lysozyme mesh with `-hs`, it took 4.1 GB at 1e-2 and 7.5 GB at 1e-3,
+against 1.5 GB at 1e-1 and 10.3 GB for the H-matrix. Both gave the same results, in 10 to 14
+and 6 to 10 iterations. The `.log` then also lists the mesh's slivers and its close pairs of
+triangles with opposite normals. Smooth meshes never take this path, so their results are
+unchanged. A larger probe radius avoids the defects. `BEST_HMATRIX_PRE_EPS` sets the first eps
+(default 1e-1).
+
 ## Versions
 
 - **`v4.0-aragon`**: BEST 4.0, rcoal 2.0 and rcoal 3.0 as Sergio Aragon released them in
@@ -225,6 +256,13 @@ Work since `v4.0-aragon`:
   `-hs` it stores the matrix in single precision, in half the memory: a mesh of 2.04
   million triangles took 16 minutes and 274 GB
   ([#14](https://github.com/ehb54/best-hydro/pull/14)).
+- BEST: sound solves on rough and multi-part meshes. A triangulation of several separate
+  closed surfaces gets one near-singularity removed per surface. Before, D_t could come out
+  negative, with exit code 0. When the H-matrix solver's coarse preconditioner breaks down
+  (probe-0 and tunnel meshes), BEST rebuilds it finer, and logs the mesh's folds and gaps.
+  GMRES stops as soon as it breaks down, and BEST no longer writes NaN to the `.be` file. On
+  32 smooth lysozyme and pepsin meshes (probe 1.5 and 3, 29,000 to 448,000 triangles), the `.be`
+  files are unchanged, byte for byte ([#16](https://github.com/ehb54/best-hydro/pull/16)).
 
 ## References
 

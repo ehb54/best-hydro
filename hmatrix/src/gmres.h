@@ -16,11 +16,14 @@ struct GmresResult {
    std::vector<int> iters;      // iterations per column
    std::vector<double> relres;  // final true relative residual |b - A x| / |b| per column
    int steps = 0;               // batched applications of A M^-1
+   bool broke = false;          // a column's true residual grew (or is not finite): see gmres
 };
 
 // Solves A X = B (n x p) by GMRES(m) with right preconditioning, X starting at zero.  The columns
 // run in lockstep so that A and M^-1 are applied to all unconverged columns at once.  A column stops
-// when its residual estimate is at most tol |b|; the true residual is checked at each restart.
+// when its residual estimate is at most tol |b|; the true residual is checked at each restart.  In
+// exact arithmetic that residual never grows; a column whose true residual has grown past twice
+// |b|, or is not finite, has broken down (an ill-conditioned preconditioner) and stops too.
 GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const double* B, int ldb, double* X, int ldx,
                    double tol, int m, int maxit );
 
