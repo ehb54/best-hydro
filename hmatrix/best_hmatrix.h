@@ -47,9 +47,16 @@ double bhm_diag_mean( void );
 /* Builds the H-matrix of GR + gdef xmu xmu^T at accuracy eps and prepares the solves: with
  * direct = 0 a preconditioner for GMRES (an H-LU factorization at eps_pre, with the near field
  * compressed too), with direct = 1 the H-LU factorization at eps.  xmu has 3n entries.  With
- * single = 1 the H-matrix and its factors are stored in single precision.  Returns 0, or nonzero
- * after queuing a message (for example when the memory needed is not available). */
-int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single );
+ * single = 1 the H-matrix and its factors are stored in single precision.  nrhs is the most
+ * right-hand sides bhm_solve will be given at once (for the memory estimate).
+ *
+ * Before the build it estimates the peak memory of the process and returns an error if the node
+ * does not have that much available above the floor below (BEST_HMATRIX_MEMCHECK=0: no check).
+ * During the build, the factorization and bhm_solve, a thread watches the node's available memory
+ * and stops the solver, with an error, if it falls below a floor: 5% of the node's memory, at
+ * least 1 GB (BEST_HMATRIX_MEMFLOOR: the floor in GB; 0: no watch).  Returns 0, or nonzero after
+ * queuing a message. */
+int bhm_build( double eps, int direct, double eps_pre, double gdef, const double* xmu, int single, int nrhs );
 
 /* Solves for nrhs right-hand sides at once: b is 3n x nrhs, column-major, and holds the
  * solutions on return.  Returns 0, or nonzero after queuing a message (GMRES did not converge). */

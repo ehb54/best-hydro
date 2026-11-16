@@ -105,6 +105,28 @@ else
    else
       bad "best -hm -hlu -hs: 2eu7_02562 -v -mw 30000 should agree with the dense solver (see $d/hs-hlu)"
    fi
+   # The memory checks read /proc/meminfo (Linux).  With a floor above the node's memory, BEST must
+   # refuse before the build; with BEST_HMATRIX_MEMCHECK=0 the guard must stop it, with an error.
+   if [ -r /proc/meminfo ]; then
+      mkdir -p mem-check mem-guard
+      cp 2eu7_02562 mem-check/
+      cp 2eu7_02562 mem-guard/
+      if ( cd mem-check && ! BEST_HMATRIX_MEMFLOOR=1e9 "$bin/best" -f 2eu7_02562 -v -mw 30000 -hm > best.out 2>&1 ) \
+         && grep -q "error: not enough memory for the H-matrix solver" mem-check/2eu7_02562vm.log; then
+         ok "best -hm: refuses to start below its memory floor"
+      else
+         bad "best -hm: should refuse to start below its memory floor (see $d/mem-check)"
+      fi
+      if ( cd mem-guard && ! BEST_HMATRIX_MEMCHECK=0 BEST_HMATRIX_MEMFLOOR=1e9 "$bin/best" -f 2eu7_02562 -v -mw 30000 -hm \
+              > best.out 2>&1 ) \
+         && grep -q "error: available memory was down to .* below the floor" mem-guard/2eu7_02562vm.log; then
+         ok "best -hm: the memory guard stops the solver below its floor"
+      else
+         bad "best -hm: the memory guard should stop the solver below its floor (see $d/mem-guard)"
+      fi
+   else
+      echo "skip - best -hm memory checks: no /proc/meminfo"
+   fi
 fi
 
 # rcoal: the author's test case.  Each mesh is regenerated from the edge

@@ -68,10 +68,10 @@ module besolve
       real(c_double) function bhm_diag_mean() bind(C, name='bhm_diag_mean')
          import :: c_double
       end function bhm_diag_mean
-      integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu, single) bind(C, name='bhm_build')
+      integer(c_int) function bhm_build(eps, direct, eps_pre, gdef, xmu, single, nrhs) bind(C, name='bhm_build')
          import :: c_int, c_double
          real(c_double), value :: eps, eps_pre, gdef
-         integer(c_int), value :: direct, single
+         integer(c_int), value :: direct, single, nrhs
          real(c_double), intent(in) :: xmu(*)
       end function bhm_build
       integer(c_int) function bhm_solve(nrhs, b) bind(C, name='bhm_solve')
@@ -152,7 +152,7 @@ contains
       real, allocatable :: xmu(:)
       real :: a(9,9), xmu2, diagm, gdef
       real :: v21x, v21y, v21z, v31x, v31y, v31z, xnx, xny, xnz, xnl
-      integer :: n, j, m, info
+      integer :: n, j, m, info, nrhs
       character(len=8) :: val
       integer :: st
 
@@ -214,7 +214,10 @@ contains
       if (ihs == 1) write(12,*) 'H-matrix stored in single precision (-hs)'
       close(12)
 
-      info = bhm_build(heps, ihlu, epspre, gdef, xmu, ihs)
+      ! BESOLV solves for at most 11 right-hand sides at once with -v or -vc, 6 without.
+      nrhs = 6
+      if (ivisco == 1) nrhs = 11
+      info = bhm_build(heps, ihlu, epspre, gdef, xmu, ihs, nrhs)
       call hmlog()
       if (info /= 0) call hmstop('the H-matrix could not be built')
       deallocate(xmu)

@@ -172,9 +172,28 @@ and it is slower except on small meshes. At 508,720 triangles it took 11 minutes
 results were within 8e-6 of GMRES's. Its peak memory is about 1.7 times its factors.
 
 The solver uses `OMP_NUM_THREADS` threads, or every hardware thread if that is not set.
-Before it builds the matrix, BEST estimates the memory needed and stops with an error if
-the node does not have that much available; `BEST_HMATRIX_MEMCHECK=0` turns the check
-off.
+
+**Memory checks.** The memory per triangle depends on the surface as well as on N. A rough
+surface, such as the union of the atoms' spheres (probe 0, with its crevices and tunnels),
+has about three times as many blocks per triangle as a smooth SES, and more than twice the
+memory. With `-hs` and GMRES, a probe-0 mesh of lysozyme with 60,562 triangles peaked at
+13.8 GB (228 KB per triangle), against 6.2 GB (103 KB) for its probe-3 SES of 60,004. A
+probe-0 mesh of 1ADO with 667,230 triangles took 221 GB (332 KB), against 64 GB (145 KB)
+for its probe-3 SES of 441,814.
+
+- **Before the build.** BEST estimates the peak memory of the run and stops with an error if
+  the node does not have that much available above the floor below. It counts the blocks
+  exactly, from the block tree, and measures their ranks on a sample of 2% of them. The
+  sample is kept for the matrix, so it costs no extra time. The `.log` gives the estimate and
+  its parts. In 61 runs, on smooth and rough meshes of 26,000 to 667,000 triangles, in
+  single and double precision and with 8 to 64 threads, it came out 1% to 12% above the
+  peak with GMRES, and 8% to 14% above with `-hlu`. `BEST_HMATRIX_MEMCHECK=0` turns this
+  check off.
+- **During the run.** While the solver builds, factors and solves, a thread watches the
+  memory available on the node. If it falls below a floor, the solver stops with an error and
+  frees its memory, instead of running the node out of memory. On a shared node that would
+  hit every job. The floor is 5% of the node's memory, and at least 1 GB.
+  `BEST_HMATRIX_MEMFLOOR` sets it in GB, and 0 turns the watch off.
 
 ## Versions
 
@@ -223,6 +242,13 @@ Work since `v4.0-aragon`:
   `-hs` it stores the matrix in single precision, in half the memory: a mesh of 2.04
   million triangles took 16 minutes and 274 GB
   ([#14](https://github.com/ehb54/best-hydro/pull/14)).
+- BEST: the H-matrix solver's memory estimate counts the matrix's blocks and samples their
+  ranks, instead of scaling with the number of triangles alone. On rough surfaces the old
+  estimate was half the peak: 95 GB for 221 GB on a 667,000-triangle probe-0 mesh. In 61 runs
+  the new estimate came out 1% to 14% above the peak, where the old one ranged from 57% under
+  to 38% over. A thread now also watches the node's available memory, and stops the solver
+  with an error before the node runs out
+  ([#17](https://github.com/ehb54/best-hydro/pull/17)).
 
 ## References
 
