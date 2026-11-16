@@ -260,7 +260,7 @@ Work since `v4.0-aragon`:
   (probe-0 and tunnel meshes), BEST rebuilds it finer, and logs the mesh's folds and gaps.
   GMRES stops as soon as it breaks down, and BEST no longer writes NaN to the `.be` file. On
   32 smooth lysozyme and pepsin meshes (probe 1.5 and 3, 29,000 to 448,000 triangles), the `.be`
-  files are unchanged, byte for byte (branch `robust-solve`).
+  files are unchanged, byte for byte ([#16](https://github.com/ehb54/best-hydro/pull/16)).
 
 ## References
 
