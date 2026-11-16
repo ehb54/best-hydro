@@ -307,20 +307,41 @@ void HMatrixT<Elt>::index() {
 }
 
 template <class Elt>
-HMatrixT<Elt> HMatrixT<Elt>::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
-   HMatrixT h( ct, make_blocks<Elt>( ct, 0, 0, opt.eta ) );
+HMatrixT<Elt> HMatrixT<Elt>::structure( const ClusterTree& ct, double eta ) {
+   return HMatrixT( ct, make_blocks<Elt>( ct, 0, 0, eta ) );
+}
+
+template <class Elt>
+void HMatrixT<Elt>::fill( const Kernel& K, const HOptions& opt, const std::vector<long>& which, long* kernel_calls ) {
    // Largest blocks first, so the long ACA runs start early.
-   std::vector<Block*> order = h.leaves_;
+   std::vector<Block*> order;
+   order.reserve( which.size() );
+   for ( long i : which ) {
+      order.push_back( leaves_[ size_t( i ) ] );
+   }
    std::stable_sort( order.begin(), order.end(),
                      []( const Block* a, const Block* b ) { return double( a->nr ) * a->nc > double( b->nr ) * b->nc; } );
    std::vector<long> calls( threads(), 0 );
+   const ClusterTree& ct = *ct_;
    parallel_for( long( order.size() ), [&]( long i, int thread ) { fill_leaf( order[ i ], ct, K, opt, calls[ thread ] ); } );
    if ( kernel_calls ) {
-      *kernel_calls = 0;
       for ( long c : calls ) {
          *kernel_calls += c;
       }
    }
+}
+
+template <class Elt>
+HMatrixT<Elt> HMatrixT<Elt>::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
+   HMatrixT h = structure( ct, opt.eta );
+   std::vector<long> all( h.leaves_.size() );
+   for ( size_t i = 0; i < all.size(); ++i ) {
+      all[ i ] = long( i );
+   }
+   if ( kernel_calls ) {
+      *kernel_calls = 0;
+   }
+   h.fill( K, opt, all, kernel_calls );
    return h;
 }
 
