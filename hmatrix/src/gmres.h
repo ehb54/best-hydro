@@ -17,6 +17,7 @@ struct GmresResult {
    std::vector<double> relres;  // final true relative residual |b - A x| / |b| per column
    int steps = 0;               // batched applications of A M^-1
    bool broke = false;          // a column's true residual grew (or is not finite): see gmres
+   bool stopped = false;        // stopped early because memory_low() (memory.h)
 };
 
 // Solves A X = B (n x p) by GMRES(m) with right preconditioning, X starting at zero.  The columns
@@ -24,6 +25,7 @@ struct GmresResult {
 // when its residual estimate is at most tol |b|; the true residual is checked at each restart.  In
 // exact arithmetic that residual never grows; a column whose true residual has grown past twice
 // |b|, or is not finite, has broken down (an ill-conditioned preconditioner) and stops too.
+// All columns stop early, with stopped set, once memory_low().
 GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const double* B, int ldb, double* X, int ldx,
                    double tol, int m, int maxit );
 

@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "mat.h"
+#include "memory.h"
 #include "parallel.h"
 
 namespace bh {
@@ -40,7 +41,7 @@ GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const doub
       done[ c ] = bnorm[ c ] == 0;
    }
    int total = 0;
-   while ( total < maxit ) {
+   while ( total < maxit && !res.stopped ) {
       std::vector<int> act;
       for ( int c = 0; c < p; ++c ) {
          if ( !done[ c ] ) {
@@ -76,6 +77,10 @@ GmresResult gmres( int n, int p, const Apply& A, const Precond& Minv, const doub
             }
          }
          if ( cyc.empty() ) {
+            break;
+         }
+         if ( memory_low() ) {
+            res.stopped = true;
             break;
          }
          const int qc = int( cyc.size() );

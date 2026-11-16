@@ -47,7 +47,7 @@ BEST_SRC   = best/besolve.f90 best/compon.f90 best/best.f best/input.f best/tget
 # multiplies and adds, so that its matrix entries match TGETGR's bit for bit.
 HM_SRC = hmatrix/src/api.cpp hmatrix/src/kernel.cpp hmatrix/src/cluster.cpp hmatrix/src/meshcheck.cpp \
          hmatrix/src/hmatrix.cpp hmatrix/src/mat.cpp hmatrix/src/dense.cpp \
-         hmatrix/src/gmres.cpp hmatrix/src/parallel.cpp
+         hmatrix/src/gmres.cpp hmatrix/src/memory.cpp hmatrix/src/parallel.cpp
 HM_HDR = hmatrix/best_hmatrix.h $(wildcard hmatrix/src/*.h)
 HM_OBJ = $(HM_SRC:hmatrix/src/%.cpp=build/%.o)
 

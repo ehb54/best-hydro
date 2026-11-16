@@ -12,6 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 
+#include "memory.h"
 #include "parallel.h"
 
 namespace bh {
@@ -308,20 +309,45 @@ void HMatrixT<Elt>::index() {
 }
 
 template <class Elt>
-HMatrixT<Elt> HMatrixT<Elt>::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
-   HMatrixT h( ct, make_blocks<Elt>( ct, 0, 0, opt.eta ) );
+HMatrixT<Elt> HMatrixT<Elt>::structure( const ClusterTree& ct, double eta ) {
+   return HMatrixT( ct, make_blocks<Elt>( ct, 0, 0, eta ) );
+}
+
+template <class Elt>
+void HMatrixT<Elt>::fill( const Kernel& K, const HOptions& opt, const std::vector<long>& which, long* kernel_calls ) {
    // Largest blocks first, so the long ACA runs start early.
-   std::vector<Block*> order = h.leaves_;
+   std::vector<Block*> order;
+   order.reserve( which.size() );
+   for ( long i : which ) {
+      order.push_back( leaves_[ size_t( i ) ] );
+   }
    std::stable_sort( order.begin(), order.end(),
                      []( const Block* a, const Block* b ) { return double( a->nr ) * a->nc > double( b->nr ) * b->nc; } );
    std::vector<long> calls( threads(), 0 );
-   parallel_for( long( order.size() ), [&]( long i, int thread ) { fill_leaf( order[ i ], ct, K, opt, calls[ thread ] ); } );
+   const ClusterTree& ct = *ct_;
+   parallel_for( long( order.size() ), [&]( long i, int thread ) {
+      if ( !memory_low() ) {
+         fill_leaf( order[ i ], ct, K, opt, calls[ thread ] );
+      }
+   } );
    if ( kernel_calls ) {
-      *kernel_calls = 0;
       for ( long c : calls ) {
          *kernel_calls += c;
       }
    }
+}
+
+template <class Elt>
+HMatrixT<Elt> HMatrixT<Elt>::build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls ) {
+   HMatrixT h = structure( ct, opt.eta );
+   std::vector<long> all( h.leaves_.size() );
+   for ( size_t i = 0; i < all.size(); ++i ) {
+      all[ i ] = long( i );
+   }
+   if ( kernel_calls ) {
+      *kernel_calls = 0;
+   }
+   h.fill( K, opt, all, kernel_calls );
    return h;
 }
 
@@ -353,6 +379,9 @@ HMatrixT<Elt> HMatrixT<Elt>::copy( double eps, bool near ) const {
    HMatrixT h( *ct_, copy_block( root_.get() ) );
    // Same structure, so the leaves are in the same order.
    parallel_for( long( leaves_.size() ), [&]( long i, int ) {
+      if ( memory_low() ) {
+         return;
+      }
       const Block* s = leaves_[ i ];
       Block* d = h.leaves_[ i ];
       if ( s->type == BType::D ) {
@@ -785,6 +814,9 @@ void product_lowrank( const BlockT<Elt>* A, const BlockT<Elt>* B, double eps, Ma
 // C += alpha A B, A (r,k), B (k,c), C (r,c), all at one level.
 template <class Elt>
 void addmul( BlockT<Elt>* C, double alpha, const BlockT<Elt>* A, const BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    if ( C->type == BType::D ) {
       if ( A->type == BType::R ) {
          const int ka = A->rank();
@@ -831,6 +863,9 @@ void addmul( BlockT<Elt>* C, double alpha, const BlockT<Elt>* A, const BlockT<El
 // B <- L^-1 B, L (t,t) unit lower, B (t,s).
 template <class Elt>
 void trsm_ll( const BlockT<Elt>* L, BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
@@ -856,6 +891,9 @@ void trsm_ll( const BlockT<Elt>* L, BlockT<Elt>* B, double eps ) {
 // B <- B U^-1, U (s,s) upper, B (t,s).
 template <class Elt>
 void trsm_ur( const BlockT<Elt>* U, BlockT<Elt>* B, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( B, eps );
    switch ( B->type ) {
       case BType::R:
@@ -923,6 +961,9 @@ void getrf_nopiv( Mat& A, int r0 ) {
 
 template <class Elt>
 void hlu_block( BlockT<Elt>* A, double eps ) {
+   if ( memory_low() ) {
+      return;
+   }
    flush( A, eps );
    if ( A->type == BType::D ) {
       const int r0 = A->r0;
@@ -971,6 +1012,9 @@ double HMatrixT<Elt>::lu( double eps ) {
    g_piv_max = 0;
    g_piv_row = -1;
    hlu_block( root_.get(), eps );
+   if ( memory_low() ) {
+      return 0;
+   }
    // Every H block was flushed when the factorization reached it; check, and flush any left.
    long left = 0;
    std::vector<Block*> stack = { root_.get() };

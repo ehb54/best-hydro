@@ -92,7 +92,8 @@ double cpu_seconds();
 // Peak and current resident memory of this process in bytes (Linux /proc; 0 elsewhere).
 size_t peak_rss();
 size_t current_rss();
-// MemAvailable from /proc/meminfo in bytes (Linux; 0 elsewhere).
+// MemAvailable and MemTotal from /proc/meminfo in bytes (Linux; 0 elsewhere).
 size_t mem_available();
+size_t mem_total();
 
 }  // namespace bh

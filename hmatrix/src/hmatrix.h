@@ -72,8 +72,17 @@ class HMatrixT {
    HMatrixT( const ClusterTree& ct, std::unique_ptr<Block> root );
    // Builds the block tree and fills it from the kernel.  kernel_calls counts 3x3 blocks evaluated.
    static HMatrixT build( const ClusterTree& ct, const Kernel& K, const HOptions& opt, long* kernel_calls );
+   // The block tree alone, with no entries: build() is structure() and then fill() of every leaf.
+   static HMatrixT structure( const ClusterTree& ct, double eta );
+   // Fills the leaves leaves()[ which[ i ] ] from the kernel, the largest first, adding the 3x3
+   // blocks evaluated to *kernel_calls.  A leaf's entries do not depend on when it is filled.
+   // Stops taking new leaves once memory_low() (memory.h); the H-matrix is then incomplete.
+   void fill( const Kernel& K, const HOptions& opt, const std::vector<long>& which, long* kernel_calls );
+   // The leaf blocks, in tree order.
+   const std::vector<Block*>& leaves() const { return leaves_; }
    // A deep copy; with eps > 0 every low-rank block is truncated again at eps, and with near also
-   // every dense leaf off the diagonal becomes low-rank at eps where that takes less memory.
+   // every dense leaf off the diagonal becomes low-rank at eps where that takes less memory.  Once
+   // memory_low() it copies no more leaves.
    HMatrixT copy( double eps, bool near = false ) const;
 
    const ClusterTree& tree() const { return *ct_; }
@@ -87,7 +96,8 @@ class HMatrixT {
 
    // In-place H-LU without pivoting: afterwards the blocks hold L (unit lower) and U, with every
    // low-rank result truncated at eps.  Returns the smallest |pivot| / largest |pivot| seen.
-   // Throws ZeroPivot at a pivot that is 0 or not finite.
+   // Throws ZeroPivot at a pivot that is 0 or not finite.  Once memory_low() (memory.h) it skips
+   // the work left, and the factors are then incomplete.
    double lu( double eps );
    // After lu(): the unknown (tree order) of the smallest |pivot|.
    static int pivot_row();
